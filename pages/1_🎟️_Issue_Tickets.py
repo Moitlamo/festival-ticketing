@@ -15,7 +15,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📲 Issue Electronic Tickets")
-st.write("Generate secure tickets and dispatch them via WhatsApp, SMS, or download for offline attendees.")
+st.write("Generate secure tickets and dispatch them via SMS or download for offline attendees.")
 
 with st.form("issue_ticket_form"):
     buyer_phone = st.text_input("Attendee Mobile Number (Include country code, e.g., +267...)")
@@ -23,7 +23,7 @@ with st.form("issue_ticket_form"):
     
     delivery_method = st.selectbox(
         "Delivery Method", 
-        ["WhatsApp Message", "SMS Text Message", "Manual / Print Only (No Message Sent)"]
+        ["SMS Text Message", "Manual / Print Only (No Message Sent)"]
     )
     
     submit_ticket = st.form_submit_button("Generate & Process Ticket", use_container_width=True)
@@ -71,31 +71,18 @@ if submit_ticket:
                 formatted_phone = "+" + formatted_phone
                 
             message_body = (
-                f"🎟️ Festival Ticket Confirmed!\n"
-                f"ID: {new_ticket.ticket_id}\n"
-                f"PIN: {security_pin}\n"
-                f"Present this at the gate."
+                f"Festival Ticket Confirmed. "
+                f"ID: {new_ticket.ticket_id[:8]} | PIN: {security_pin}"
             )
             
-            # --- FETCH CREDENTIALS DIRECTLY FROM STREAMLIT SECRETS & SEND ---
-            if delivery_method != "Manual / Print Only (No Message Sent)":
+            if delivery_method == "SMS Text Message":
                 client = Client(st.secrets["TWILIO_ACCOUNT_SID"], st.secrets["TWILIO_AUTH_TOKEN"])
-                
-                if delivery_method == "WhatsApp Message":
-                    message = client.messages.create(
-                        from_="whatsapp:+14155238886",
-                        body=message_body,
-                        to=f"whatsapp:{formatted_phone}"
-                    )
-                    st.info(f"📱 WhatsApp sent successfully to {formatted_phone}!")
-                    
-                elif delivery_method == "SMS Text Message":
-                    message = client.messages.create(
-                        from_=st.secrets["TWILIO_PHONE_NUMBER"],
-                        body=message_body,
-                        to=formatted_phone
-                    )
-                    st.info(f"💬 SMS text message sent successfully to {formatted_phone}!")
+                message = client.messages.create(
+                    from_=st.secrets["TWILIO_PHONE_NUMBER"],
+                    body=message_body,
+                    to=formatted_phone
+                )
+                st.info(f"💬 SMS text message sent successfully to {formatted_phone}!")
                 
         except Exception as e:
             st.error(f"An error occurred: {e}")
