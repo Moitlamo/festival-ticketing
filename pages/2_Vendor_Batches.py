@@ -1,112 +1,111 @@
 import streamlit as st
+import qrcode
+import zipfile
 import pandas as pd
+from io import BytesIO
+import random
 from models import SessionLocal, Ticket
 
-# Configure the page
-st.set_page_config(page_title="Vendor Allocations", layout="wide")
+st.set_page_config(page_title="Vendor Batches", layout="centered")
 
-# Apply the custom dark red and deep blue UI to reduce visual fatigue
+# Custom UI Styling
 st.markdown("""
     <style>
-    .stApp {
-        background-color: #0b1120; 
-        color: #e2e8f0;
-    }
-    .stButton>button {
-        background-color: #7f1d1d;
-        color: white;
-        border: none;
-    }
-    .stButton>button:hover {
-        background-color: #991b1b;
-        color: white;
-    }
-    div[data-testid="stForm"] {
-        background-color: #1e293b;
-        border: 1px solid #7f1d1d;
-    }
+    .stApp { background-color: #0b1120; color: #e2e8f0; } /* Deep blue background */
+    .stButton>button { background-color: #8b0000; color: white; border: none; } /* Dark red primary buttons */
+    .stButton>button:hover { background-color: #a52a2a; color: white; }
+    .stTextInput>div>div>input { background-color: #1e3a8a; color: white; } /* Deep blue input fields */
+    div[data-baseweb="input"] { background-color: #1e3a8a; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📦 Vendor Ticket Allocation")
-st.write("Assign batches of pre-printed paper tickets to street promoters and track cash owed.")
+st.title("📦 Generate Vendor Batches")
+st.write("Create bulk physical ticket batches for promoters or offline sales.")
 
-# Open database connection
-db = SessionLocal()
-
-col1, col2 = st.columns([1, 1.5])
-
-with col1:
-    st.subheader("Assign New Batch")
-    with st.form("allocation_form"):
-        vendor_name = st.text_input("Promoter / Vendor Name")
-        prefix = st.text_input("Serial Prefix (e.g., FEST-)", value="FEST-")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            start_num = st.number_input("Starting Number", min_value=1, step=1)
-        with c2:
-            end_num = st.number_input("Ending Number", min_value=1, step=1)
-            
-        submit = st.form_submit_button("Allocate Tickets to Vendor")
-        
-        if submit and vendor_name:
-            if start_num <= end_num:
-                new_tickets = []
-                # Loop through the range and generate the serial numbers
-                for i in range(int(start_num), int(end_num) + 1):
-                    # Format as FEST-001, FEST-002, etc.
-                    serial = f"{prefix}{i:03d}"
-                    
-                    # Check if ticket already exists to prevent duplicates
-                    existing = db.query(Ticket).filter(Ticket.serial_number == serial).first()
-                    if not existing:
-                        ticket = Ticket(
-                            ticket_type="Manual",
-                            serial_number=serial,
-                            status="Available",
-                            vendor_name=vendor_name
-                        )
-                        new_tickets.append(ticket)
-                
-                if new_tickets:
-                    db.add_all(new_tickets)
-                    db.commit()
-                    st.success(f"✅ Successfully allocated {len(new_tickets)} tickets to {vendor_name}.")
-                else:
-                    st.warning("All tickets in this range are already allocated in the database.")
-            else:
-                st.error("Ending number must be greater than or equal to starting number.")
-
-with col2:
-    st.subheader("Current Vendor Tracking")
-    # Query database to group tickets by vendor and calculate statuses
-    vendors = db.query(Ticket.vendor_name).filter(Ticket.ticket_type == 'Manual').distinct().all()
+with st.form("vendor_batch_form"):
+    vendor_name = st.text_input("Vendor / Promoter Name")
+    batch_size = st.number_input("Number of Tickets to Generate", min_value=1, max_value=500, value=50)
     
-    if vendors and vendors[0][0] is not None:
-        tracking_data = []
-        for v in vendors:
-            v_name = v[0]
-            if not v_name: continue
-            
-            total = db.query(Ticket).filter(Ticket.vendor_name == v_name).count()
-            sold = db.query(Ticket).filter(Ticket.vendor_name == v_name, Ticket.status.in_(['Sold', 'Scanned'])).count()
-            available = total - sold
-            
-            # Assuming a manual ticket costs P100 for this prototype
-            cash_owed = sold * 100 
-            
-            tracking_data.append({
-                "Vendor": v_name,
-                "Allocated": total,
-                "Unsold (Available)": available,
-                "Sold/Scanned": sold,
-                "Cash Owed": f"P {cash_owed:,}"
-            })
-            
-        df = pd.DataFrame(tracking_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No manual tickets have been allocated to vendors yet.")
+    submit_batch = st.form_submit_button("Generate Ticket Batch", use_container_width=True)
 
-db.close()
+if submit_batch:
+    if not vendor_name:
+        st.error("⚠️ Please enter a Vendor Name.")
+    else:
+        db = SessionLocal()
+        try:
+            zip_buffer = BytesIO()
+            ticket_data = []
+            
+            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                st.write(f"Generating {batch_size} tickets for {vendor_name}...")
+                progress_bar = st.progress(0)
+                
+                for i in range(int(batch_size)):
+                    # Auto-generate a random 4-digit PIN for each physical ticket
+                    security_pin = str(random.randint(1000, 9999))
+                    
+                    # Log the vendor name in the phone column or note field
+                    new_ticket = Ticket(
+                        ticket_type="Physical",
+                        status="With_Vendor",
+                        buyer_phone=f"Vendor: {vendor_name}", 
+                        security_pin=security_pin
+                    )
+                    db.add(new_ticket)
+                    db.commit()
+                    db.refresh(new_ticket)
+                    
+                    # Generate QR Code 
+                    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+                    qr.add_data(new_ticket.ticket_id)
+                    qr.make(fit=True)
+                    img = qr.make_image(fill_color="#0b1120", back_color="white").convert('RGB')
+                    
+                    img_buffer = BytesIO()
+                    img.save(img_buffer, format="PNG")
+                    
+                    # Add image to ZIP file
+                    file_name = f"Ticket_{i+1}_{new_ticket.ticket_id[:8]}.png"
+                    zip_file.writestr(file_name, img_buffer.getvalue())
+                    
+                    # Add details to our CSV log
+                    ticket_data.append({
+                        "Ticket Number": i + 1,
+                        "Ticket ID": new_ticket.ticket_id,
+                        "PIN": security_pin,
+                        "Status": "With_Vendor"
+                    })
+                    
+                    progress_bar.progress((i + 1) / int(batch_size))
+            
+            # Create a pandas dataframe and convert to CSV for the vendor log
+            df = pd.DataFrame(ticket_data)
+            csv_buffer = df.to_csv(index=False).encode('utf-8')
+            
+            st.success(f"✅ Successfully generated {batch_size} tickets!")
+            
+            # Provide download buttons side-by-side
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="📦 Download QR Codes (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"Vendor_{vendor_name.replace(' ', '_')}_Batch.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
+            with col2:
+                st.download_button(
+                    label="📊 Download Ticket Log (CSV)",
+                    data=csv_buffer,
+                    file_name=f"Vendor_{vendor_name.replace(' ', '_')}_Log.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            db.rollback()
+        finally:
+            db.close()
