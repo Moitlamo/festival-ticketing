@@ -4,3 +4,4 @@ sqlalchemy
 qrcode
 pillow
 twilio
+pip install streamlit-qrcode-scanner
