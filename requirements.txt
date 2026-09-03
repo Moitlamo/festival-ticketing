@@ -1,7 +1,7 @@
 streamlit
-pandas
 sqlalchemy
-qrcode
-pillow
 twilio
-pip install streamlit-qrcode-scanner
+qrcode
+pandas
+pillow
+streamlit-qrcode-scanner
