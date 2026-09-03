@@ -1,5 +1,6 @@
 import streamlit as st
 import qrcode
+import json
 from io import BytesIO
 from models import SessionLocal, Ticket
 from twilio.rest import Client
@@ -75,18 +76,19 @@ if submit_ticket:
                 
                 if delivery_method == "WhatsApp Message":
                     try:
+                        # Uses Content API to bypass the Sandbox template restriction
                         message = client.messages.create(
                             from_="whatsapp:+14155238886",
-                            body=f"Festival Ticket Confirmed! ID: {new_ticket.ticket_id[:8]} | PIN: {security_pin}",
+                            content_sid=st.secrets["TWILIO_CONTENT_SID"],
+                            content_variables=json.dumps({
+                                "1": "Festival Ticket", 
+                                "2": f"ID: {new_ticket.ticket_id[:8]} PIN: {security_pin}"
+                            }),
                             to=f"whatsapp:{formatted_phone}"
                         )
                         st.info(f"📱 WhatsApp ticket sent successfully to {formatted_phone}!")
                     except Exception as wa_err:
-                        st.warning(
-                            f"ℹ️ WhatsApp sandbox restriction encountered: {wa_err}. "
-                            "Twilio trial accounts require an active chat session or approved templates for WhatsApp. "
-                            "You can use the **Download QR Code** button above or switch delivery to **SMS Text Message**."
-                        )
+                        st.error(f"WhatsApp Error: {wa_err}")
                     
                 elif delivery_method == "SMS Text Message":
                     message_body = (
