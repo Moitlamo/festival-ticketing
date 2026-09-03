@@ -15,24 +15,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📲 Issue Electronic Tickets")
-st.write("Generate secure tickets and dispatch them directly via WhatsApp.")
+st.write("Generate secure tickets and dispatch them via WhatsApp, SMS, or download for offline attendees.")
 
 with st.form("issue_ticket_form"):
-    # Require country code for WhatsApp API routing
-    buyer_phone = st.text_input("Buyer WhatsApp Number (Include +267)")
-    
-    # Capture the 4-digit PIN required for future reissuance
+    buyer_phone = st.text_input("Attendee Mobile Number (Include country code, e.g., +267...)")
     security_pin = st.text_input("Create 4-Digit Security PIN", type="password", max_chars=4)
     
-    submit_ticket = st.form_submit_button("Generate & Send via WhatsApp", use_container_width=True)
+    # Choose how to deliver the ticket
+    delivery_method = st.selectbox(
+        "Delivery Method", 
+        ["WhatsApp Message", "SMS Text Message", "Manual / Print Only (No Message Sent)"]
+    )
+    
+    submit_ticket = st.form_submit_button("Generate & Process Ticket", use_container_width=True)
 
 if submit_ticket:
     if not buyer_phone or len(security_pin) != 4:
-        st.error("⚠️ Please provide a valid WhatsApp number and a 4-digit PIN.")
+        st.error("⚠️ Please provide a valid mobile number and a 4-digit PIN.")
     else:
         db = SessionLocal()
         try:
-            # Save ticket with the phone number and PIN
+            # Save ticket to database
             new_ticket = Ticket(
                 ticket_type="Electronic", 
                 status="Sold",
@@ -43,7 +46,7 @@ if submit_ticket:
             db.commit()
             db.refresh(new_ticket)
             
-            # Generate the QR Code
+            # Generate QR Code image
             qr = qrcode.QRCode(version=1, box_size=10, border=4)
             qr.add_data(new_ticket.ticket_id)
             qr.make(fit=True)
@@ -53,36 +56,58 @@ if submit_ticket:
             img.save(buf, format="PNG")
             byte_im = buf.getvalue()
             
-            st.success(f"✅ Ticket {new_ticket.ticket_id} generated!")
-            st.image(byte_im)
+            st.success(f"✅ Ticket generated successfully!")
             
-            # WhatsApp Dispatch Logic
+            # Display QR code and direct download option for everyone
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(byte_im, caption=f"Ticket ID: {new_ticket.ticket_id}")
+                st.download_button(
+                    label="📥 Download Ticket QR Code (For Print/Gallery)",
+                    data=byte_im,
+                    file_name=f"ticket_{new_ticket.ticket_id[:8]}.png",
+                    mime="image/png",
+                    use_container_width=True
+                )
+            
+            # --- MESSAGE DISPATCH LOGIC ---
             TWILIO_ACCOUNT_SID = "your_account_sid_here"
             TWILIO_AUTH_TOKEN = "your_auth_token_here"
-            TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886" 
+            TWILIO_PHONE_NUMBER = "your_twilio_sms_number_here" # e.g., +1234567890
+            TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"
+            
+            formatted_phone = buyer_phone.strip()
+            if not formatted_phone.startswith("+"):
+                formatted_phone = "+" + formatted_phone
+                
+            message_body = (
+                f"🎟️ Festival Ticket Confirmed!\n"
+                f"ID: {new_ticket.ticket_id}\n"
+                f"PIN: {security_pin}\n"
+                f"Present this at the gate."
+            )
             
             if TWILIO_ACCOUNT_SID != "your_account_sid_here":
                 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                message_body = (
-                    f"🎟️ *Your Event Ticket is Confirmed!*\n\n"
-                    f"Ticket ID: {new_ticket.ticket_id}\n"
-                    f"Security PIN: Keep your 4-digit PIN safe in case you lose this message.\n\n"
-                    f"Please present this ID or your QR code at the gate."
-                )
                 
-                # Format phone number for Twilio WhatsApp API
-                formatted_phone = buyer_phone.strip()
-                if not formatted_phone.startswith("+"):
-                    formatted_phone = "+" + formatted_phone
+                if delivery_method == "WhatsApp Message":
+                    message = client.messages.create(
+                        from_=TWILIO_WHATSAPP_NUMBER,
+                        body=message_body,
+                        to=f"whatsapp:{formatted_phone}"
+                    )
+                    st.info(f"📱 WhatsApp sent to {formatted_phone}!")
                     
-                message = client.messages.create(
-                    from_=TWILIO_WHATSAPP_NUMBER,
-                    body=message_body,
-                    to=f"whatsapp:{formatted_phone}"
-                )
-                st.info(f"📱 WhatsApp sent successfully to {formatted_phone}!")
+                elif delivery_method == "SMS Text Message":
+                    message = client.messages.create(
+                        from_=TWILIO_PHONE_NUMBER,
+                        body=message_body,
+                        to=formatted_phone
+                    )
+                    st.info(f"💬 SMS text message sent to {formatted_phone}!")
             else:
-                st.warning("⚠️ Ticket generated, but WhatsApp was not sent. Twilio API credentials are required.")
+                if delivery_method != "Manual / Print Only (No Message Sent)":
+                    st.warning("⚠️ Twilio credentials not configured. Ticket created locally, but no message was sent.")
                 
         except Exception as e:
             st.error(f"An error occurred: {e}")
