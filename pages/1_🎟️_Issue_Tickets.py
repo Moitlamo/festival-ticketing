@@ -77,13 +77,13 @@ if submit_ticket:
                 f"Present this at the gate."
             )
             
-            # --- FETCH CREDENTIALS DIRECTLY FROM STREAMLIT SECRETS ---
+            # --- FETCH CREDENTIALS DIRECTLY FROM STREAMLIT SECRETS & SEND ---
             if delivery_method != "Manual / Print Only (No Message Sent)":
                 client = Client(st.secrets["TWILIO_ACCOUNT_SID"], st.secrets["TWILIO_AUTH_TOKEN"])
                 
                 if delivery_method == "WhatsApp Message":
                     message = client.messages.create(
-                        from_=st.secrets["TWILIO_WHATSAPP_NUMBER"],
+                        from_="whatsapp:+14155238886",
                         body=message_body,
                         to=f"whatsapp:{formatted_phone}"
                     )
