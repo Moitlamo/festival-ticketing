@@ -10,7 +10,6 @@ from models import SessionLocal, Ticket
 
 st.set_page_config(page_title="Vendor Batches", layout="centered")
 
-# Deep blue and dark red styling to reduce visual fatigue
 st.markdown("""
     <style>
     .stApp { background-color: #0b1120; color: #e2e8f0; }
@@ -19,6 +18,13 @@ st.markdown("""
     .stTextInput>div>div>input, .stSelectbox>div>div>select { background-color: #1e293b; color: white; }
     </style>
 """, unsafe_allow_html=True)
+
+# --- USERNAME EVENT LOCKING ---
+USER_EVENT_MAP = {
+    "moitlamoleririma": "Leririma Games",
+    "moitlamotfm": "Total Football Mania",
+    "moitlamoeea": "Education Excellence Awards"
+}
 
 # --- VENDOR REGISTRY LOGIC ---
 VENDOR_FILE = "vendors.json"
@@ -42,60 +48,60 @@ def save_vendor(v_id, v_name, v_contact, v_address):
 vendors_db = load_vendors()
 
 st.title("📦 Generate Vendor Batches")
-st.write("Manage promoters and generate bulk ticket blocks tracked by event.")
+st.write("Manage promoters and generate bulk ticket blocks.")
 
-# --- EVENT TRACKING ---
-st.subheader("1. Select Event")
-event_list = [
-    "Leririma Games", 
-    "Total Football Mania", 
-    "Education Excellence Awards", 
-    "Other (Custom)"
-]
-selected_event = st.selectbox("Event Name", event_list)
+# --- 1. SYSTEM AUTHENTICATION ---
+st.subheader("1. System Authentication")
+admin_username = st.text_input("Enter System Username", type="password")
 
-if selected_event == "Other (Custom)":
-    selected_event = st.text_input("Enter Custom Event Name")
+selected_event = None
+if admin_username:
+    # Normalize input to avoid case-sensitivity issues
+    auth_key = admin_username.strip().lower()
+    selected_event = USER_EVENT_MAP.get(auth_key)
+    
+    if selected_event:
+        st.success(f"✅ Authenticated. System locked to: **{selected_event}**")
+    else:
+        st.error("⚠️ Invalid username. No event associated with this account.")
+        st.stop() # Halts the app here so unauthorized users cannot generate tickets
+else:
+    st.info("Please enter your username to unlock batch generation.")
+    st.stop()
 
+# --- 2. EVENT TRACKING ---
 db = SessionLocal()
+try:
+    total_event_tickets = db.query(Ticket).filter(
+        Ticket.buyer_phone.like(f"%Event: {selected_event}%")
+    ).count()
+    st.info(f"📊 **Total Tickets Generated for {selected_event}:** {total_event_tickets}")
+except Exception:
+    st.info(f"📊 **Total Tickets Generated for {selected_event}:** 0")
 
-# Calculate total tickets generated for this event dynamically
-if selected_event:
-    try:
-        total_event_tickets = db.query(Ticket).filter(
-            Ticket.buyer_phone.like(f"%Event: {selected_event}%")
-        ).count()
-        st.info(f"📊 **Total Tickets Generated for {selected_event}:** {total_event_tickets}")
-    except Exception:
-        st.info("📊 **Total Tickets Generated for this event:** 0")
-
-# --- VENDOR SELECTION ---
+# --- 3. VENDOR SELECTION ---
 st.subheader("2. Assign Vendor")
 
 vendor_options = ["+ Add New Vendor"] + [f"{v['name']} (ID: {k})" for k, v in vendors_db.items()]
 selected_vendor_option = st.selectbox("Select Existing Vendor or Add New", vendor_options)
 
-vendor_id = ""
-vendor_name = ""
-vendor_contact = ""
-vendor_address = ""
+vendor_id, vendor_name, vendor_contact, vendor_address = "", "", "", ""
 
 if selected_vendor_option == "+ Add New Vendor":
     with st.expander("📝 Register New Vendor", expanded=True):
         vendor_id = st.text_input("Vendor ID (e.g., VEND-001)")
         vendor_name = st.text_input("Vendor Name (Person or Business)")
         vendor_contact = st.text_input("Contact Number")
-        vendor_address = st.text_input("Address (e.g., Xhosa 1 Ward, Mahalapye)")
+        vendor_address = st.text_input("Address")
         
         if st.button("Save Vendor to Registry"):
             if vendor_id and vendor_name:
                 save_vendor(vendor_id, vendor_name, vendor_contact, vendor_address)
                 st.success(f"Vendor {vendor_name} saved successfully!")
-                st.rerun() # Instantly refreshes the dropdown with the new vendor
+                st.rerun() 
             else:
                 st.error("⚠️ Vendor ID and Name are required.")
 else:
-    # Extract vendor ID from the dropdown selection string
     vendor_id = selected_vendor_option.split("(ID: ")[1].replace(")", "")
     vendor_data = vendors_db.get(vendor_id, {})
     vendor_name = vendor_data.get("name", "")
@@ -104,15 +110,15 @@ else:
     
     st.write(f"**Contact:** {vendor_contact} | **Address:** {vendor_address}")
 
-# --- BATCH GENERATION ---
+# --- 4. BATCH GENERATION ---
 st.subheader("3. Generate Batch")
 with st.form("vendor_batch_form"):
     batch_size = st.number_input("Number of Tickets to Generate", min_value=1, max_value=500, value=50)
     submit_batch = st.form_submit_button("Generate Ticket Batch", use_container_width=True)
 
 if submit_batch:
-    if not vendor_name or not selected_event:
-        st.error("⚠️ Please ensure an Event and Vendor are fully selected or registered.")
+    if not vendor_name:
+        st.error("⚠️ Please ensure a Vendor is fully selected or registered.")
     else:
         try:
             zip_buffer = BytesIO()
@@ -124,8 +130,6 @@ if submit_batch:
                 
                 for i in range(int(batch_size)):
                     security_pin = str(random.randint(1000, 9999))
-                    
-                    # Pack tracking data into the existing DB column architecture
                     tracking_data = f"Vendor: {vendor_name} [{vendor_id}] | Event: {selected_event}"
                     
                     new_ticket = Ticket(
@@ -138,7 +142,6 @@ if submit_batch:
                     db.commit()
                     db.refresh(new_ticket)
                     
-                    # Generate the physical QR badge
                     qr = qrcode.QRCode(version=1, box_size=10, border=4)
                     qr.add_data(new_ticket.ticket_id)
                     qr.make(fit=True)
@@ -150,7 +153,6 @@ if submit_batch:
                     file_name = f"Ticket_{i+1}_{new_ticket.ticket_id[:8]}.png"
                     zip_file.writestr(file_name, img_buffer.getvalue())
                     
-                    # Add to the Master Log for the vendor
                     ticket_data.append({
                         "Event": selected_event,
                         "Vendor Name": vendor_name,
