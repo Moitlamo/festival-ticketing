@@ -6,6 +6,7 @@ import json
 import os
 import random
 from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 from models import SessionLocal, Ticket
 
 st.set_page_config(page_title="Vendor Batches", layout="centered")
@@ -48,7 +49,7 @@ def save_vendor(v_id, v_name, v_contact, v_address):
 vendors_db = load_vendors()
 
 st.title("📦 Generate Vendor Batches")
-st.write("Manage promoters and generate bulk ticket blocks.")
+st.write("Manage promoters and generate bulk physical ticket blocks.")
 
 # --- 1. SYSTEM AUTHENTICATION ---
 st.subheader("1. System Authentication")
@@ -56,7 +57,6 @@ admin_username = st.text_input("Enter System Username", type="password")
 
 selected_event = None
 if admin_username:
-    # Normalize input to avoid case-sensitivity issues
     auth_key = admin_username.strip().lower()
     selected_event = USER_EVENT_MAP.get(auth_key)
     
@@ -64,7 +64,7 @@ if admin_username:
         st.success(f"✅ Authenticated. System locked to: **{selected_event}**")
     else:
         st.error("⚠️ Invalid username. No event associated with this account.")
-        st.stop() # Halts the app here so unauthorized users cannot generate tickets
+        st.stop()
 else:
     st.info("Please enter your username to unlock batch generation.")
     st.stop()
@@ -114,23 +114,27 @@ else:
 st.subheader("3. Generate Batch")
 with st.form("vendor_batch_form"):
     batch_size = st.number_input("Number of Tickets to Generate", min_value=1, max_value=500, value=50)
+    # New Ticket Value Field
+    ticket_value = st.text_input("Ticket Value (e.g., P 150.00, VIP P 500.00)", value="P 100.00")
+    
     submit_batch = st.form_submit_button("Generate Ticket Batch", use_container_width=True)
 
 if submit_batch:
-    if not vendor_name:
-        st.error("⚠️ Please ensure a Vendor is fully selected or registered.")
+    if not vendor_name or not ticket_value:
+        st.error("⚠️ Please ensure a Vendor is selected and a Ticket Value is provided.")
     else:
         try:
             zip_buffer = BytesIO()
             ticket_data = []
             
             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                st.write(f"Generating {batch_size} tickets for {vendor_name} ({selected_event})...")
+                st.write(f"Generating {batch_size} tickets for {vendor_name}...")
                 progress_bar = st.progress(0)
                 
                 for i in range(int(batch_size)):
                     security_pin = str(random.randint(1000, 9999))
-                    tracking_data = f"Vendor: {vendor_name} [{vendor_id}] | Event: {selected_event}"
+                    # Appending ticket value to our database tracking string
+                    tracking_data = f"Vendor: {vendor_name} [{vendor_id}] | Event: {selected_event} | Value: {ticket_value}"
                     
                     new_ticket = Ticket(
                         ticket_type="Physical",
@@ -142,13 +146,38 @@ if submit_batch:
                     db.commit()
                     db.refresh(new_ticket)
                     
+                    # 1. Generate base QR Code
                     qr = qrcode.QRCode(version=1, box_size=10, border=4)
                     qr.add_data(new_ticket.ticket_id)
                     qr.make(fit=True)
-                    img = qr.make_image(fill_color="#0b1120", back_color="white").convert('RGB')
+                    qr_img = qr.make_image(fill_color="#0b1120", back_color="white").convert('RGB')
                     
+                    # 2. Expand image canvas to fit text at the bottom
+                    qr_w, qr_h = qr_img.size
+                    extra_height = 80
+                    final_img = Image.new('RGB', (qr_w, qr_h + extra_height), color='white')
+                    final_img.paste(qr_img, (0, 0))
+                    
+                    # 3. Draw text onto the image
+                    draw = ImageDraw.Draw(final_img)
+                    try:
+                        # Attempt to load a default TrueType font if available on Streamlit Cloud
+                        font = ImageFont.truetype("DejaVuSans.ttf", 18)
+                    except IOError:
+                        # Fallback to standard generic font
+                        font = ImageFont.load_default()
+                        
+                    event_text = f"Event: {selected_event}"
+                    val_text = f"Value: {ticket_value}"
+                    pin_text = f"PIN: {security_pin}"
+                    
+                    draw.text((25, qr_h), event_text, fill="#0b1120", font=font)
+                    draw.text((25, qr_h + 25), val_text, fill="#7f1d1d", font=font)
+                    draw.text((25, qr_h + 50), pin_text, fill="#0b1120", font=font)
+                    
+                    # Save the customized composite image
                     img_buffer = BytesIO()
-                    img.save(img_buffer, format="PNG")
+                    final_img.save(img_buffer, format="PNG")
                     
                     file_name = f"Ticket_{i+1}_{new_ticket.ticket_id[:8]}.png"
                     zip_file.writestr(file_name, img_buffer.getvalue())
@@ -157,6 +186,7 @@ if submit_batch:
                         "Event": selected_event,
                         "Vendor Name": vendor_name,
                         "Vendor ID": vendor_id,
+                        "Ticket Value": ticket_value,
                         "Ticket Number": i + 1,
                         "Ticket ID": new_ticket.ticket_id,
                         "PIN": security_pin,
@@ -173,7 +203,7 @@ if submit_batch:
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
-                    label="📦 Download QR Codes (ZIP)",
+                    label="📦 Download Printed QR Codes (ZIP)",
                     data=zip_buffer.getvalue(),
                     file_name=f"{selected_event.replace(' ', '_')}_{vendor_name.replace(' ', '_')}_Batch.zip",
                     mime="application/zip",
