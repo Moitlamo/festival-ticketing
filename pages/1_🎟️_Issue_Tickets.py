@@ -21,7 +21,6 @@ with st.form("issue_ticket_form"):
     buyer_phone = st.text_input("Attendee Mobile Number (Include country code, e.g., +267...)")
     security_pin = st.text_input("Create 4-Digit Security PIN", type="password", max_chars=4)
     
-    # Choose how to deliver the ticket
     delivery_method = st.selectbox(
         "Delivery Method", 
         ["WhatsApp Message", "SMS Text Message", "Manual / Print Only (No Message Sent)"]
@@ -35,7 +34,6 @@ if submit_ticket:
     else:
         db = SessionLocal()
         try:
-            # Save ticket to database
             new_ticket = Ticket(
                 ticket_type="Electronic", 
                 status="Sold",
@@ -46,7 +44,6 @@ if submit_ticket:
             db.commit()
             db.refresh(new_ticket)
             
-            # Generate QR Code image
             qr = qrcode.QRCode(version=1, box_size=10, border=4)
             qr.add_data(new_ticket.ticket_id)
             qr.make(fit=True)
@@ -58,7 +55,6 @@ if submit_ticket:
             
             st.success(f"✅ Ticket generated successfully!")
             
-            # Display QR code and direct download option for everyone
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
                 st.image(byte_im, caption=f"Ticket ID: {new_ticket.ticket_id}")
@@ -69,12 +65,6 @@ if submit_ticket:
                     mime="image/png",
                     use_container_width=True
                 )
-            
-            # --- MESSAGE DISPATCH LOGIC ---
-            TWILIO_ACCOUNT_SID = "your_account_sid_here"
-            TWILIO_AUTH_TOKEN = "your_auth_token_here"
-            TWILIO_PHONE_NUMBER = "your_twilio_sms_number_here" # e.g., +1234567890
-            TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"
             
             formatted_phone = buyer_phone.strip()
             if not formatted_phone.startswith("+"):
@@ -87,27 +77,25 @@ if submit_ticket:
                 f"Present this at the gate."
             )
             
-            if TWILIO_ACCOUNT_SID != "your_account_sid_here":
-                client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            # --- FETCH CREDENTIALS DIRECTLY FROM STREAMLIT SECRETS ---
+            if delivery_method != "Manual / Print Only (No Message Sent)":
+                client = Client(st.secrets["TWILIO_ACCOUNT_SID"], st.secrets["TWILIO_AUTH_TOKEN"])
                 
                 if delivery_method == "WhatsApp Message":
                     message = client.messages.create(
-                        from_=TWILIO_WHATSAPP_NUMBER,
+                        from_=st.secrets["TWILIO_WHATSAPP_NUMBER"],
                         body=message_body,
                         to=f"whatsapp:{formatted_phone}"
                     )
-                    st.info(f"📱 WhatsApp sent to {formatted_phone}!")
+                    st.info(f"📱 WhatsApp sent successfully to {formatted_phone}!")
                     
                 elif delivery_method == "SMS Text Message":
                     message = client.messages.create(
-                        from_=TWILIO_PHONE_NUMBER,
+                        from_=st.secrets["TWILIO_PHONE_NUMBER"],
                         body=message_body,
                         to=formatted_phone
                     )
-                    st.info(f"💬 SMS text message sent to {formatted_phone}!")
-            else:
-                if delivery_method != "Manual / Print Only (No Message Sent)":
-                    st.warning("⚠️ Twilio credentials not configured. Ticket created locally, but no message was sent.")
+                    st.info(f"💬 SMS text message sent successfully to {formatted_phone}!")
                 
         except Exception as e:
             st.error(f"An error occurred: {e}")
