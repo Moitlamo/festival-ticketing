@@ -44,7 +44,6 @@ st.markdown("---")
 # --- DATA EXTRACTION & PROCESSING ---
 db = SessionLocal()
 try:
-    # Fetch all tickets linked to this event (filtering physical batches and generic digital entries if mapped)
     all_tickets = db.query(Ticket).all()
     event_tickets = [t for t in all_tickets if selected_event in str(t.buyer_phone) or selected_event in str(t.ticket_type)]
     
@@ -52,7 +51,6 @@ try:
         st.warning(f"No ticket data found yet for {selected_event}.")
         st.stop()
 
-    # Initialize Metric Counters
     total_revenue = 0.0
     digital_count = 0
     physical_count = 0
@@ -60,30 +58,32 @@ try:
     vendor_stats = {}
 
     for t in event_tickets:
-        # 1. Gate Conversion
         if t.status == "Used":
             scanned_count += 1
             
-        # 2. Channel Split
         if t.ticket_type == "Physical":
             physical_count += 1
         else:
             digital_count += 1
             
-        # 3. Revenue Parsing (Extracts numbers from "Value: P 150.00")
-        if "Value:" in str(t.buyer_phone):
+        numeric_val = 0.0
+        parts = str(t.buyer_phone).split(" | ")
+        
+        # Safely isolate ONLY the Value segment to prevent merging with phone numbers
+        val_part = [p for p in parts if "Value:" in p]
+        if val_part:
             try:
-                val_str = t.buyer_phone.split("Value:")[1].strip()
-                # Use regex to strip non-numeric characters (except decimals)
+                val_str = val_part[0].replace("Value:", "").strip()
                 numeric_val = float(re.sub(r'[^\d.]', '', val_str))
                 total_revenue += numeric_val
             except:
                 pass
                 
-        # 4. Vendor Performance Parsing
-        if "Vendor:" in str(t.buyer_phone):
+        # Safely isolate ONLY the Vendor segment
+        vendor_part = [p for p in parts if "Vendor:" in p]
+        if vendor_part:
             try:
-                v_name = t.buyer_phone.split("Vendor:")[1].split("[")[0].strip()
+                v_name = vendor_part[0].replace("Vendor:", "").split("[")[0].strip()
                 if v_name not in vendor_stats:
                     vendor_stats[v_name] = {"Tickets Issued": 0, "Gate Check-ins": 0, "Revenue Generated (P)": 0.0}
                 
@@ -92,15 +92,13 @@ try:
                 if t.status == "Used":
                     vendor_stats[v_name]["Gate Check-ins"] += 1
                 
-                if "Value:" in str(t.buyer_phone):
-                    vendor_stats[v_name]["Revenue Generated (P)"] += numeric_val
+                vendor_stats[v_name]["Revenue Generated (P)"] += numeric_val
             except:
                 pass
 
     total_issued = len(event_tickets)
     attendance_rate = (scanned_count / total_issued) * 100 if total_issued > 0 else 0
 
-    # --- TOP LEVEL METRICS ---
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -130,12 +128,10 @@ try:
     st.write("")
     st.write("")
 
-    # --- SECONDARY CHARTS & TABLES ---
     colA, colB = st.columns([1, 2])
     
     with colA:
         st.subheader("Ticket Distribution")
-        # Simple dataframe to power a native Streamlit bar chart
         dist_df = pd.DataFrame({
             "Channel": ["Physical (Vendors)", "Digital (WhatsApp/SMS)"],
             "Count": [physical_count, digital_count]
@@ -146,9 +142,7 @@ try:
         st.subheader("Top Vendor Performance")
         if vendor_stats:
             vendor_df = pd.DataFrame.from_dict(vendor_stats, orient='index')
-            # Calculate conversion rate per vendor
             vendor_df["Conversion %"] = (vendor_df["Gate Check-ins"] / vendor_df["Tickets Issued"] * 100).round(1)
-            # Sort by highest revenue generated
             vendor_df = vendor_df.sort_values(by="Revenue Generated (P)", ascending=False)
             st.dataframe(vendor_df, use_container_width=True)
         else:
