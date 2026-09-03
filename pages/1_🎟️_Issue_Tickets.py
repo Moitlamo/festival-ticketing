@@ -53,7 +53,7 @@ if submit_ticket:
             img.save(buf, format="PNG")
             byte_im = buf.getvalue()
             
-            st.success(f"✅ Ticket generated successfully!")
+            st.success(f"✅ Ticket generated and saved to database successfully!")
             
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
@@ -74,13 +74,19 @@ if submit_ticket:
                 client = Client(st.secrets["TWILIO_ACCOUNT_SID"], st.secrets["TWILIO_AUTH_TOKEN"])
                 
                 if delivery_method == "WhatsApp Message":
-                    # Using Twilio's sandbox pre-approved code structure for trial compliance
-                    message = client.messages.create(
-                        from_="whatsapp:+14155238886",
-                        body=f"Your Festival ticket code is {new_ticket.ticket_id[:8]} with PIN {security_pin}. Please present this at the entrance.",
-                        to=f"whatsapp:{formatted_phone}"
-                    )
-                    st.info(f"📱 WhatsApp ticket sent successfully to {formatted_phone}!")
+                    try:
+                        message = client.messages.create(
+                            from_="whatsapp:+14155238886",
+                            body=f"Festival Ticket Confirmed! ID: {new_ticket.ticket_id[:8]} | PIN: {security_pin}",
+                            to=f"whatsapp:{formatted_phone}"
+                        )
+                        st.info(f"📱 WhatsApp ticket sent successfully to {formatted_phone}!")
+                    except Exception as wa_err:
+                        st.warning(
+                            f"ℹ️ WhatsApp sandbox restriction encountered: {wa_err}. "
+                            "Twilio trial accounts require an active chat session or approved templates for WhatsApp. "
+                            "You can use the **Download QR Code** button above or switch delivery to **SMS Text Message**."
+                        )
                     
                 elif delivery_method == "SMS Text Message":
                     message_body = (
