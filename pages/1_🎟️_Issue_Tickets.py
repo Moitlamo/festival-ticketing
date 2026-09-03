@@ -1,86 +1,91 @@
 import streamlit as st
 import qrcode
 from io import BytesIO
-from PIL import Image
 from models import SessionLocal, Ticket
+from twilio.rest import Client
 
-# Configure the page
 st.set_page_config(page_title="Issue Electronic Tickets", layout="centered")
 
-# Apply the Dark Blue and Deep Red UI to reduce visual fatigue
 st.markdown("""
     <style>
-    .stApp {
-        background-color: #0b1120; 
-        color: #e2e8f0;
-    }
-    /* Style the generation buttons with the dark red aesthetic */
-    .stButton>button {
-        background-color: #7f1d1d;
-        color: white;
-        border: none;
-    }
-    .stButton>button:hover {
-        background-color: #991b1b;
-        color: white;
-    }
+    .stApp { background-color: #0b1120; color: #e2e8f0; }
+    .stButton>button { background-color: #7f1d1d; color: white; border: none; }
+    .stButton>button:hover { background-color: #991b1b; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("📲 Issue Electronic Tickets")
-st.write("Generate secure, UUID-backed QR codes for online buyers.")
+st.write("Generate secure tickets and dispatch them directly via WhatsApp.")
 
-# Button to trigger ticket generation
-if st.button("Generate New Electronic Ticket", use_container_width=True):
-    # 1. Open database connection
-    db = SessionLocal()
+with st.form("issue_ticket_form"):
+    # Require country code for WhatsApp API routing
+    buyer_phone = st.text_input("Buyer WhatsApp Number (Include +267)")
     
-    try:
-        # 2. Create the ticket record in the database
-        new_ticket = Ticket(
-            ticket_type="Electronic",
-            status="Sold"  # Marked as sold immediately upon generation
-        )
-        db.add(new_ticket)
-        db.commit()
-        db.refresh(new_ticket) # Retrieves the generated UUID
-        
-        # 3. Generate the QR Code containing the UUID
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_H,
-            box_size=10,
-            border=4,
-        )
-        qr.add_data(new_ticket.ticket_id)
-        qr.make(fit=True)
-        
-        # Create the image (using the dark blue for the QR code itself)
-        img = qr.make_image(fill_color="#0b1120", back_color="white").convert('RGB')
-        
-        # 4. Save image to a temporary memory buffer so Streamlit can display/download it
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        byte_im = buf.getvalue()
-        
-        # 5. Display the success message and the ticket
-        st.success("✅ Ticket successfully generated and saved to the database!")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.image(byte_im, caption=f"Ticket ID: {new_ticket.ticket_id}")
-            
-            # Allow the admin to download the QR code to send to the buyer
-            st.download_button(
-                label="Download QR Code Ticket",
-                data=byte_im,
-                file_name=f"ticket_{new_ticket.ticket_id}.png",
-                mime="image/png",
-                use_container_width=True
+    # Capture the 4-digit PIN required for future reissuance
+    security_pin = st.text_input("Create 4-Digit Security PIN", type="password", max_chars=4)
+    
+    submit_ticket = st.form_submit_button("Generate & Send via WhatsApp", use_container_width=True)
+
+if submit_ticket:
+    if not buyer_phone or len(security_pin) != 4:
+        st.error("⚠️ Please provide a valid WhatsApp number and a 4-digit PIN.")
+    else:
+        db = SessionLocal()
+        try:
+            # Save ticket with the phone number and PIN
+            new_ticket = Ticket(
+                ticket_type="Electronic", 
+                status="Sold",
+                buyer_phone=buyer_phone.strip(),
+                security_pin=security_pin
             )
+            db.add(new_ticket)
+            db.commit()
+            db.refresh(new_ticket)
             
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
-        db.rollback()
-    finally:
-        db.close()
+            # Generate the QR Code
+            qr = qrcode.QRCode(version=1, box_size=10, border=4)
+            qr.add_data(new_ticket.ticket_id)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="#0b1120", back_color="white").convert('RGB')
+            
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            byte_im = buf.getvalue()
+            
+            st.success(f"✅ Ticket {new_ticket.ticket_id} generated!")
+            st.image(byte_im)
+            
+            # WhatsApp Dispatch Logic
+            TWILIO_ACCOUNT_SID = "your_account_sid_here"
+            TWILIO_AUTH_TOKEN = "your_auth_token_here"
+            TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886" 
+            
+            if TWILIO_ACCOUNT_SID != "your_account_sid_here":
+                client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                message_body = (
+                    f"🎟️ *Your Event Ticket is Confirmed!*\n\n"
+                    f"Ticket ID: {new_ticket.ticket_id}\n"
+                    f"Security PIN: Keep your 4-digit PIN safe in case you lose this message.\n\n"
+                    f"Please present this ID or your QR code at the gate."
+                )
+                
+                # Format phone number for Twilio WhatsApp API
+                formatted_phone = buyer_phone.strip()
+                if not formatted_phone.startswith("+"):
+                    formatted_phone = "+" + formatted_phone
+                    
+                message = client.messages.create(
+                    from_=TWILIO_WHATSAPP_NUMBER,
+                    body=message_body,
+                    to=f"whatsapp:{formatted_phone}"
+                )
+                st.info(f"📱 WhatsApp sent successfully to {formatted_phone}!")
+            else:
+                st.warning("⚠️ Ticket generated, but WhatsApp was not sent. Twilio API credentials are required.")
+                
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            db.rollback()
+        finally:
+            db.close()
