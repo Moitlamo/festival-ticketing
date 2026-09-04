@@ -1,43 +1,43 @@
 import uuid
-from datetime import datetime
-from sqlalchemy import Column, String, DateTime, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+import streamlit as st
+from sqlalchemy import create_engine, Column, String
+from sqlalchemy.orm import sessionmaker, declarative_base
 
+# 1. Fetch the cloud database URL from Streamlit Secrets
+# If testing locally without secrets, fallback to SQLite
+try:
+    DATABASE_URL = st.secrets["DATABASE_URL"]
+except (FileNotFoundError, KeyError):
+    DATABASE_URL = "sqlite:///ticketing.db"
+
+# 2. Fix PostgreSQL URL scheme for SQLAlchemy compatibility
+# Supabase sometimes provides 'postgres://', but SQLAlchemy requires 'postgresql://'
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# 3. Initialize the database connection engine
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+# 4. Define the Ticket Table Schema
 class Ticket(Base):
-    __tablename__ = 'tickets'
+    __tablename__ = "tickets"
     
-    # Primary Identifier (Becomes the QR Code for Electronic Tickets)
-    ticket_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Primary key: Unique random string (UUID) for the QR code
+    ticket_id = Column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
     
-    # 'Electronic' or 'Manual'
-    ticket_type = Column(String, nullable=False) 
+    # Type of ticket (e.g., Physical, Digital, Gate_WalkIn, Wristband_Exchange)
+    ticket_type = Column(String, default="Digital")
     
-    # --- MANUAL TICKET TRACKING ---
-    # For paper tickets, e.g., 'FEST-001'
-    serial_number = Column(String, unique=True, nullable=True) 
-    # Name of the promoter/vendor holding the manual ticket
-    vendor_name = Column(String, nullable=True) 
+    # Gate control status (e.g., Sold, With_Vendor, Used)
+    status = Column(String, default="Sold")
     
-    # --- ELECTRONIC SECURITY & REISSUANCE ---
-    # Primary ID for WhatsApp delivery and recovery
-    buyer_phone = Column(String, nullable=True) 
-    # 4-digit PIN set at purchase to authorize ticket transfers
-    security_pin = Column(String, nullable=True) 
-    # If a ticket is reissued, this tracks the ID of the voided original
-    original_ticket_id = Column(String, nullable=True) 
+    # Metadata string holding Event Name, Ticket Value, Vendor Name, and Buyer Phone
+    buyer_phone = Column(String, nullable=True)
     
-    # --- STATE MANAGEMENT ---
-    # Allowed states: 'Available', 'Sold', 'Scanned', 'Void'
-    status = Column(String, default='Available') 
-    
-    # Timestamp of generation
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # 4-digit security PIN for SMS recovery and manual verification
+    security_pin = Column(String, nullable=True)
 
-# Initialize SQLite database (Streamlit automatically builds this in the cloud)
-engine = create_engine('sqlite:///festival_tickets.db', echo=False)
-Base.metadata.create_all(engine)
-
-# Create a session factory we will use in our app pages to query the database
-SessionLocal = sessionmaker(bind=engine)
+# 5. Automatically build the tables in Supabase if they do not exist
+Base.metadata.create_all(bind=engine)
