@@ -11,7 +11,6 @@ except (FileNotFoundError, KeyError):
     DATABASE_URL = "sqlite:///ticketing.db"
 
 # 2. Fix PostgreSQL URL scheme for SQLAlchemy compatibility
-# Supabase sometimes provides 'postgres://', but SQLAlchemy requires 'postgresql://'
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -39,5 +38,10 @@ class Ticket(Base):
     # 4-digit security PIN for SMS recovery and manual verification
     security_pin = Column(String, nullable=True)
 
-# 5. Automatically build the tables in Supabase if they do not exist
-Base.metadata.create_all(bind=engine)
+# 5. Automatically build tables and catch EXACT connection errors
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    st.error("🚨 DATABASE CONNECTION FAILED. EXACT ERROR:")
+    st.code(str(e))
+    st.stop()
