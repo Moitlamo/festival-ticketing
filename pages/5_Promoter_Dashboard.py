@@ -1,154 +1,61 @@
 import streamlit as st
-import pandas as pd
 import re
-from models import SessionLocal, Ticket
+from models import SessionLocal, Ticket, Vendor
 
-st.set_page_config(page_title="Promoter Dashboard", layout="wide")
+st.set_page_config(page_title="Promoter Dashboard", page_icon="📊", layout="wide")
+st.title("📊 Promoter Dashboard")
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #0b1120; color: #e2e8f0; }
-    .stTextInput>div>div>input { background-color: #1e293b; color: white; }
-    .metric-card { background-color: #1e293b; padding: 20px; border-radius: 8px; border-left: 5px solid #7f1d1d; }
-    .metric-title { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
-    .metric-value { font-size: 32px; font-weight: bold; color: white; }
-    </style>
-""", unsafe_allow_html=True)
-
-st.title("📊 Live Promoter Dashboard")
-st.write("Real-time event financials, gate conversions, and vendor tracking.")
-
-# --- SYSTEM AUTHENTICATION ---
-USER_EVENT_MAP = {
-    "moitlamoleririma": "Leririma Games",
-    "moitlamotfm": "Total Football Mania",
-    "moitlamoeea": "Education Excellence Awards"
-}
-
-admin_username = st.text_input("Enter System Username", type="password")
-
-if not admin_username:
-    st.info("Please enter your username to view live event metrics.")
-    st.stop()
-
-auth_key = admin_username.strip().lower()
-selected_event = USER_EVENT_MAP.get(auth_key)
-
-if not selected_event:
-    st.error("⚠️ Invalid username. No event associated with this account.")
-    st.stop()
-
-st.success(f"✅ Dashboard locked to: **{selected_event}**")
-st.markdown("---")
-
-# --- DATA EXTRACTION & PROCESSING ---
-db = SessionLocal()
+session = SessionLocal()
 try:
-    all_tickets = db.query(Ticket).all()
-    event_tickets = [t for t in all_tickets if selected_event in str(t.buyer_phone) or selected_event in str(t.ticket_type)]
+    all_tickets = session.query(Ticket).all()
     
-    if not event_tickets:
-        st.warning(f"No ticket data found yet for {selected_event}.")
-        st.stop()
+    # 1. Categorize Tickets by Status
+    issued_tickets = [t for t in all_tickets if t.status == "With_Vendor"]
+    sold_tickets = [t for t in all_tickets if t.status in ["Sold", "Used"]]
+    used_tickets = [t for t in all_tickets if t.status == "Used"]
+    
+    # 2. Calculate Actual Revenue (Only from Sold/Used tickets)
+    actual_revenue = 0
+    for t in sold_tickets:
+        # Extract the price number from strings like "Batch - P 100.00" or "Physical_P50"
+        match = re.search(r'\d+', t.ticket_type)
+        if match:
+            actual_revenue += int(match.group())
 
-    total_revenue = 0.0
-    digital_count = 0
-    physical_count = 0
-    scanned_count = 0
-    vendor_stats = {}
+    # 3. Calculate Potential Revenue (Inventory currently with vendors)
+    potential_revenue = 0
+    for t in issued_tickets:
+        match = re.search(r'\d+', t.ticket_type)
+        if match:
+            potential_revenue += int(match.group())
 
-    for t in event_tickets:
-        if t.status == "Used":
-            scanned_count += 1
-            
-        if t.ticket_type == "Physical":
-            physical_count += 1
-        else:
-            digital_count += 1
-            
-        numeric_val = 0.0
-        parts = str(t.buyer_phone).split(" | ")
-        
-        # Safely isolate ONLY the Value segment to prevent merging with phone numbers
-        val_part = [p for p in parts if "Value:" in p]
-        if val_part:
-            try:
-                val_str = val_part[0].replace("Value:", "").strip()
-                numeric_val = float(re.sub(r'[^\d.]', '', val_str))
-                total_revenue += numeric_val
-            except:
-                pass
-                
-        # Safely isolate ONLY the Vendor segment
-        vendor_part = [p for p in parts if "Vendor:" in p]
-        if vendor_part:
-            try:
-                v_name = vendor_part[0].replace("Vendor:", "").split("[")[0].strip()
-                if v_name not in vendor_stats:
-                    vendor_stats[v_name] = {"Tickets Issued": 0, "Gate Check-ins": 0, "Revenue Generated (P)": 0.0}
-                
-                vendor_stats[v_name]["Tickets Issued"] += 1
-                
-                if t.status == "Used":
-                    vendor_stats[v_name]["Gate Check-ins"] += 1
-                
-                vendor_stats[v_name]["Revenue Generated (P)"] += numeric_val
-            except:
-                pass
-
-    total_issued = len(event_tickets)
-    attendance_rate = (scanned_count / total_issued) * 100 if total_issued > 0 else 0
-
+    # --- Dashboard UI ---
+    st.subheader("Financial Overview")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Estimated Gross Revenue</div>
-            <div class="metric-value">P {total_revenue:,.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
+        st.metric(label="Actual Gross Revenue", value=f"P {actual_revenue}.00", help="Revenue from finalized sales.")
     with col2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Total Tickets Issued</div>
-            <div class="metric-value">{total_issued}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
+        st.metric(label="Pending Vendor Inventory", value=f"P {potential_revenue}.00", help="Value of unsold tickets held by vendors.")
     with col3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Live Gate Check-ins</div>
-            <div class="metric-value">{scanned_count} <span style="font-size:16px; color:#34d399;">({attendance_rate:.1f}%)</span></div>
-        </div>
-        """, unsafe_allow_html=True)
+        total = actual_revenue + potential_revenue
+        st.metric(label="Total System Value", value=f"P {total}.00")
 
-    st.write("")
-    st.write("")
-
-    colA, colB = st.columns([1, 2])
+    st.divider()
     
-    with colA:
-        st.subheader("Ticket Distribution")
-        dist_df = pd.DataFrame({
-            "Channel": ["Physical (Vendors)", "Digital (WhatsApp/SMS)"],
-            "Count": [physical_count, digital_count]
-        }).set_index("Channel")
-        st.bar_chart(dist_df, color="#7f1d1d")
-        
-    with colB:
-        st.subheader("Top Vendor Performance")
-        if vendor_stats:
-            vendor_df = pd.DataFrame.from_dict(vendor_stats, orient='index')
-            vendor_df["Conversion %"] = (vendor_df["Gate Check-ins"] / vendor_df["Tickets Issued"] * 100).round(1)
-            vendor_df = vendor_df.sort_values(by="Revenue Generated (P)", ascending=False)
-            st.dataframe(vendor_df, use_container_width=True)
-        else:
-            st.info("No physical vendor data recorded for this event yet.")
+    st.subheader("Gate & Distribution Stats")
+    col4, col5, col6 = st.columns(3)
+    
+    with col4:
+        st.metric(label="Total Tickets Sold", value=len(sold_tickets))
+    with col5:
+        st.metric(label="Tickets Pending Sale", value=len(issued_tickets))
+    with col6:
+        check_in_rate = (len(used_tickets) / len(sold_tickets) * 100) if sold_tickets else 0
+        st.metric(label="Live Gate Check-Ins", value=f"{len(used_tickets)} ({check_in_rate:.1f}%)")
 
 except Exception as e:
-    st.error(f"Error loading dashboard data: {e}")
+    st.error("Error loading dashboard data.")
+    st.code(str(e))
 finally:
-    db.close()
+    session.close()
