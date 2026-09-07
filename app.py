@@ -1,50 +1,51 @@
 import streamlit as st
+import re
 from models import SessionLocal, Ticket
 
-# Configure the page settings
-st.set_page_config(page_title="Festival Ticketing Command Center", layout="wide")
-
-# Apply the custom Dark Blue and Deep Red UI
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #0b1120; 
-        color: #e2e8f0;
-    }
-    div[data-testid="metric-container"] {
-        background-color: #7f1d1d;
-        border-radius: 8px;
-        padding: 15px;
-        color: white;
-    }
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Festival Command Center", page_icon="🎟️", layout="wide")
 
 st.title("🎟️ Festival Command Center")
 
-# Open a connection to the database
-db = SessionLocal()
-
-# Calculate live metrics
-total_sold = db.query(Ticket).filter(Ticket.status.in_(['Sold', 'Scanned'])).count()
-total_scanned = db.query(Ticket).filter(Ticket.status == 'Scanned').count()
-
-# Assuming an electronic ticket costs P150 for this prototype
-electronic_sold = db.query(Ticket).filter(Ticket.ticket_type == 'Electronic', Ticket.status.in_(['Sold', 'Scanned'])).count()
-electronic_revenue = electronic_sold * 150
-
-db.close()
-
-# Display live metrics
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric(label="Total Tickets Sold", value=f"{total_sold}")
-with col2:
-    st.metric(label="Total Scanned (In Venue)", value=f"{total_scanned}")
-with col3:
-    st.metric(label="Electronic Revenue", value=f"P {electronic_revenue:,}")
-with col4:
-    st.metric(label="Vendor Cash Owed", value="P 0")
-
-st.divider()
-st.success("✅ Database connected successfully! Your dashboard is now reading live data.")
+session = SessionLocal()
+try:
+    all_tickets = session.query(Ticket).all()
+    
+    # 1. Filter tickets by their live status
+    sold_tickets = [t for t in all_tickets if t.status in ["Sold", "Used"]]
+    scanned_tickets = [t for t in all_tickets if t.status == "Used"]
+    
+    # 2. Calculate Revenue Streams
+    electronic_revenue = 0
+    vendor_cash_owed = 0
+    
+    for t in sold_tickets:
+        # Extract the numeric price from the ticket_type string (e.g., "Batch - P 100.00")
+        match = re.search(r'\d+', t.ticket_type)
+        if match:
+            price = int(match.group())
+            # If a vendor sold it, they owe you the cash. Otherwise, it's direct electronic revenue.
+            if t.vendor_name:
+                vendor_cash_owed += price
+            else:
+                electronic_revenue += price
+                
+    # 3. Build the Dashboard UI
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Tickets Sold", len(sold_tickets))
+    with col2:
+        st.metric("Total Scanned (In Venue)", len(scanned_tickets))
+    with col3:
+        st.metric("Electronic Revenue", f"P {electronic_revenue}")
+    with col4:
+        st.metric("Vendor Cash Owed", f"P {vendor_cash_owed}")
+        
+    st.divider()
+    st.success("✅ Database connected successfully! Your dashboard is now reading live data.")
+    
+except Exception as e:
+    st.error("🚨 Error loading database statistics.")
+    st.code(str(e))
+finally:
+    session.close()
