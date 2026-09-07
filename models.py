@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import streamlit as st
 import datetime
+import uuid  # 🚨 Added this import to generate unique IDs
 
 # Database connection setup
 DATABASE_URL = st.secrets["DATABASE_URL"]
@@ -15,8 +16,8 @@ Base = declarative_base()
 class Ticket(Base):
     __tablename__ = "tickets"
     
-    # Core Identity
-    id = Column(String, primary_key=True) 
+    # 🚨 Updated to automatically generate a UUID string if one isn't provided
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) 
     ticket_type = Column(String, nullable=False)
     status = Column(String, default="With_Vendor")
     
