@@ -15,16 +15,20 @@ Base = declarative_base()
 class Ticket(Base):
     __tablename__ = "tickets"
     
-    # Existing columns
+    # Core Identity
     id = Column(String, primary_key=True) 
     ticket_type = Column(String, nullable=False)
     status = Column(String, default="With_Vendor")
-    security_pin = Column(String, nullable=True)
     
-    # 🚨 NEW COLUMN ADDED HERE 🚨
+    # Security & Physical Tracking
+    security_pin = Column(String, nullable=True)
     printed_serial = Column(String, nullable=True, unique=True)
     
-    # Timestamp for when the ticket was generated/imported
+    # Vendor & Buyer Tracking
+    vendor_name = Column(String, nullable=True)
+    buyer_phone = Column(String, nullable=True)
+    
+    # Metadata
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 # Ensure tables are created (this skips existing tables)
