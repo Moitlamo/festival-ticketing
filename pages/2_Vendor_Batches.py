@@ -1,43 +1,48 @@
 import streamlit as st
 import random
-from models import SessionLocal, Ticket
+from models import SessionLocal, Ticket, Vendor
 
 st.set_page_config(page_title="Vendor Batches", page_icon="📦")
-
 st.title("📦 Generate Vendor Batches")
-st.caption("Create and assign digital ticket batches to registered festival vendors.")
+st.caption("Assign digital ticket batches to registered festival vendors.")
 
-with st.form("batch_form"):
-    vendor_name = st.text_input("Vendor Name & Code (e.g., Presto Restaurant [VEND-001])")
-    quantity = st.number_input("Number of Tickets to Generate", min_value=1, max_value=500, value=50)
-    ticket_value = st.text_input("Ticket Value (e.g., P 100.00, VIP P 500.00)", value="P 100.00")
-    
-    submitted = st.form_submit_button("Generate Ticket Batch", type="primary", use_container_width=True)
+# 1. Fetch the list of registered vendors from the database
+session = SessionLocal()
+vendors = session.query(Vendor).all()
+vendor_names = [v.name for v in vendors]
+session.close()
 
-if submitted:
-    if not vendor_name.strip():
-        st.warning("Please enter a vendor name and code.")
-    else:
+# 2. Check if there are any vendors available
+if not vendor_names:
+    st.warning("⚠️ No vendors found! Please register a vendor in the 'Manage Vendors' page first.")
+else:
+    # 3. Use a selectbox instead of a text input
+    with st.form("batch_form"):
+        selected_vendor = st.selectbox("Select an Authorized Vendor", vendor_names)
+        quantity = st.number_input("Number of Tickets to Generate", min_value=1, max_value=500, value=50)
+        ticket_value = st.text_input("Ticket Value (e.g., P 100.00, VIP P 500.00)", value="P 100.00")
+        
+        submitted = st.form_submit_button("Generate Ticket Batch", type="primary", use_container_width=True)
+
+    if submitted:
         session = SessionLocal()
         try:
-            st.info(f"Generating {quantity} tickets for {vendor_name}...")
+            st.info(f"Generating {quantity} tickets for {selected_vendor}...")
             
             for _ in range(quantity):
-                # Generate a random 4-digit security PIN for each ticket
                 pin = str(random.randint(1000, 9999))
-                
                 new_ticket = Ticket(
                     ticket_type=f"Batch - {ticket_value}",
                     status="With_Vendor",
                     security_pin=pin,
-                    vendor_name=vendor_name,
-                    buyer_phone=None,       # Will be filled when sold
-                    printed_serial=None     # Left blank for digital batches
+                    vendor_name=selected_vendor, 
+                    buyer_phone=None,       
+                    printed_serial=None     
                 )
                 session.add(new_ticket)
                 
             session.commit()
-            st.success(f"Successfully generated {quantity} tickets for {vendor_name}!")
+            st.success(f"✅ Successfully generated {quantity} tickets for {selected_vendor}!")
             st.balloons()
             
         except Exception as e:
