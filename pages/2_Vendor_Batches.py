@@ -31,7 +31,7 @@ if submitted:
                     status="With_Vendor",
                     security_pin=pin,
                     vendor_name=vendor_name,
-                    buyer_phone=None,       # Will be filled when the vendor sells it
+                    buyer_phone=None,       # Will be filled when sold
                     printed_serial=None     # Left blank for digital batches
                 )
                 session.add(new_ticket)
