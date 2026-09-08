@@ -6,3 +6,5 @@ pandas
 Pillow
 streamlit-qrcode-scanner
 psycopg2-binary
+pyzbar
+Pillow
