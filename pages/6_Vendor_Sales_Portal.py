@@ -11,7 +11,7 @@ st.markdown("""
     <style>
     /* Force the QR scanner iframe to maintain a proper height on mobile */
     iframe {
-        min-height: 350px !important;
+        min-height: 250px !important;
         width: 100% !important;
     }
     </style>
