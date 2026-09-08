@@ -6,6 +6,17 @@ from sqlalchemy import or_
 
 st.set_page_config(page_title="Vendor Sales Portal", page_icon="🎫")
 
+# --- Mobile UI Fixes ---
+st.markdown("""
+    <style>
+    /* Force the QR scanner iframe to maintain a proper height on mobile */
+    iframe {
+        min-height: 350px !important;
+        width: 100% !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # --- Authentication Mock ---
 if 'logged_in_vendor' not in st.session_state:
     st.session_state.logged_in_vendor = "Bofelo Lefoko" 
