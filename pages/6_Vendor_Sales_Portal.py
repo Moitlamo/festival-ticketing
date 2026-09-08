@@ -1,7 +1,6 @@
 import streamlit as st
 import urllib.parse
-from pyzbar.pyzbar import decode
-from PIL import Image
+from streamlit_qrcode_scanner import qrcode_scanner
 
 # TODO: Import your actual database session and models here
 # from database import SessionLocal, Ticket 
@@ -9,7 +8,6 @@ from PIL import Image
 st.set_page_config(page_title="Vendor Sales Portal", page_icon="🎫")
 
 # --- Authentication Mock ---
-# Replace this with your actual login state logic
 if 'logged_in_vendor' not in st.session_state:
     st.session_state.logged_in_vendor = "Bofelo Lefoko" 
 
@@ -44,24 +42,17 @@ with tab1:
         else:
             st.warning("Please enter both the serial number and phone number.")
 
-# TAB 2: QR Scanner (Native Mobile Camera)
+# TAB 2: QR Scanner (Live Auto-Scanner)
 with tab2:
-    st.write("Take a clear photo of the physical ticket's QR code to scan it.")
+    st.write("Hold the physical ticket's QR code up to the camera to scan.")
     
-    # This safely triggers the phone's native camera
-    camera_photo = st.camera_input("Snap QR Code", key="vendor_cam")
-    scanned_uuid = None
+    # Using the exact same live scanner as the Gate Validator, but with a unique key
+    scanned_uuid = qrcode_scanner(key="vendor_scanner_live")
     
-    if camera_photo is not None:
-        # Read the image and decode the QR
-        img = Image.open(camera_photo)
-        decoded_objects = decode(img)
-        
-        if decoded_objects:
-            scanned_uuid = decoded_objects[0].data.decode("utf-8")
-            st.success(f"✅ QR Code Scanned: {scanned_uuid}")
-        else:
-            st.error("🚨 No QR code detected. Please ensure the code is clear and try again.")
+    # Display the scanned UUID if successful
+    if scanned_uuid:
+        st.success("✅ QR Code Scanned Successfully!")
+        st.code(scanned_uuid)
     
     buyer_phone_scan = st.text_input("Buyer Phone Number (+267)", key="phone_scan")
     
@@ -70,7 +61,7 @@ with tab2:
              st.success(f"✅ Ticket {scanned_uuid} successfully registered to {buyer_phone_scan} and marked as Sold.")
              # TODO: Add database query to update status to "Sold" where id == scanned_uuid
         elif not scanned_uuid:
-             st.warning("Please snap a clear picture of the QR code first.")
+             st.warning("Please scan the QR code first.")
         elif not buyer_phone_scan:
              st.warning("Please enter the buyer's phone number.")
 
