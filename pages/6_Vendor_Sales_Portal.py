@@ -1,6 +1,7 @@
 import streamlit as st
 import urllib.parse
-from datetime import datetime
+from pyzbar.pyzbar import decode
+from PIL import Image
 
 # TODO: Import your actual database session and models here
 # from database import SessionLocal, Ticket 
@@ -19,6 +20,7 @@ st.success(f"Logged in as: **{vendor}**")
 # --- Live Inventory Section ---
 st.header("Live Inventory")
 
+# Uncomment below when connecting to your live PostgreSQL database
 # db_session = SessionLocal()
 # available_count = db_session.query(Ticket).filter_by(vendor_name=vendor, status="With_Vendor").count()
 available_count = 19 # Placeholder matching your screenshot
@@ -42,21 +44,35 @@ with tab1:
         else:
             st.warning("Please enter both the serial number and phone number.")
 
-# TAB 2: QR Scanner (Physical)
+# TAB 2: QR Scanner (Native Mobile Camera)
 with tab2:
-    st.write("Sell a physical ticket by scanning its printed QR code.")
+    st.write("Take a clear photo of the physical ticket's QR code to scan it.")
     
-    # 🚨 PASTE YOUR WORKING SCANNER WIDGET FROM THE GATE VALIDATOR HERE 🚨
-    # Example: scanned_uuid = your_qr_scanner(key="vendor_scanner")
+    # This safely triggers the phone's native camera
+    camera_photo = st.camera_input("Snap QR Code", key="vendor_cam")
+    scanned_uuid = None
     
-    # Placeholder for the scanner logic
-    scanned_uuid = st.text_input("Simulated Scanner Output (UUID)", key="sim_scanner") 
+    if camera_photo is not None:
+        # Read the image and decode the QR
+        img = Image.open(camera_photo)
+        decoded_objects = decode(img)
+        
+        if decoded_objects:
+            scanned_uuid = decoded_objects[0].data.decode("utf-8")
+            st.success(f"✅ QR Code Scanned: {scanned_uuid}")
+        else:
+            st.error("🚨 No QR code detected. Please ensure the code is clear and try again.")
+    
     buyer_phone_scan = st.text_input("Buyer Phone Number (+267)", key="phone_scan")
     
     if st.button("Process Scanned Ticket", key="btn_scan"):
         if scanned_uuid and buyer_phone_scan:
              st.success(f"✅ Ticket {scanned_uuid} successfully registered to {buyer_phone_scan} and marked as Sold.")
              # TODO: Add database query to update status to "Sold" where id == scanned_uuid
+        elif not scanned_uuid:
+             st.warning("Please snap a clear picture of the QR code first.")
+        elif not buyer_phone_scan:
+             st.warning("Please enter the buyer's phone number.")
 
 # TAB 3: Digital & WhatsApp
 with tab3:
@@ -75,12 +91,6 @@ with tab3:
             whatsapp_url = f"https://wa.me/267{buyer_phone_digital}?text={encoded_message}"
             
             st.success("✅ Digital ticket assigned successfully!")
-            
-            # Generate the on-screen QR Code (Requires 'qrcode' library)
-            # import qrcode
-            # img = qrcode.make(mock_ticket_id)
-            # st.image(img.get_image(), caption="Scan at Gate")
-            
             st.markdown(f"[**💬 Send Ticket via WhatsApp**]({whatsapp_url})", unsafe_allow_html=True)
             
             # TODO: Update DB status to 'Sold' and commit
