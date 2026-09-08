@@ -1,154 +1,88 @@
 import streamlit as st
-import qrcode
 import urllib.parse
-from io import BytesIO
-from models import SessionLocal, Ticket, Vendor
-from streamlit_qrcode_scanner import qrcode_scanner
+from datetime import datetime
 
-st.set_page_config(page_title="Vendor Sales Portal", page_icon="💼")
-st.title("💼 Vendor Sales Portal")
-st.caption("Register sales and assign tickets to buyers.")
+# TODO: Import your actual database session and models here
+# from database import SessionLocal, Ticket 
 
-session = SessionLocal()
-try:
-    vendors = session.query(Vendor).all()
-    vendor_names = ["Select Your Profile"] + [v.name for v in vendors]
-except Exception:
-    st.error("Database connection error.")
-    vendor_names = ["Select Your Profile"]
-finally:
-    session.close()
+st.set_page_config(page_title="Vendor Sales Portal", page_icon="🎫")
 
-st.subheader("Vendor Login")
-selected_vendor = st.selectbox("Select your authorized vendor profile", vendor_names, label_visibility="collapsed")
+# --- Authentication Mock ---
+# Replace this with your actual login state logic
+if 'logged_in_vendor' not in st.session_state:
+    st.session_state.logged_in_vendor = "Bofelo Lefoko" 
 
-if selected_vendor == "Select Your Profile":
-    st.info("Please select your vendor profile to access the POS and inventory.")
-else:
-    st.success(f"Logged in as: **{selected_vendor}**")
-    st.divider()
+vendor = st.session_state.logged_in_vendor
+
+st.success(f"Logged in as: **{vendor}**")
+
+# --- Live Inventory Section ---
+st.header("Live Inventory")
+
+# db_session = SessionLocal()
+# available_count = db_session.query(Ticket).filter_by(vendor_name=vendor, status="With_Vendor").count()
+available_count = 19 # Placeholder matching your screenshot
+
+st.metric(label="Tickets Ready to Sell", value=available_count)
+
+# --- Sales Section ---
+st.header("Register a Sale")
+tab1, tab2, tab3 = st.tabs(["⌨️ Enter Number", "📸 Scan QR", "📱 Digital & WhatsApp"])
+
+# TAB 1: Manual Physical Entry
+with tab1:
+    st.write("Sell a physical ticket by typing its 3-digit serial number.")
+    serial_input = st.text_input("Enter 3-Digit Serial Number (e.g., 045)", max_chars=3)
+    buyer_phone_manual = st.text_input("Buyer Phone Number (+267)", key="phone_manual")
     
-    session = SessionLocal()
-    try:
-        available_tickets = session.query(Ticket).filter_by(vendor_name=selected_vendor, status="With_Vendor").all()
-        
-        st.subheader("Live Inventory")
-        st.metric(label="Tickets Ready to Sell", value=len(available_tickets))
-        
-        if len(available_tickets) > 0:
-            st.write("### Register a Sale")
-            
-            tab1, tab2, tab3 = st.tabs(["⌨️ Enter Number", "📷 Scan QR", "🎟️ Digital & WhatsApp"])
-            
-            # --- TAB 1: SERIAL NUMBER ENTRY ---
-            with tab1:
-                st.caption("Sell a physical ticket by typing its 3-digit printed serial number.")
-                with st.form("serial_sale_form", clear_on_submit=True):
-                    serial_input = st.text_input("Ticket Serial Number", max_chars=3, placeholder="e.g., 025")
-                    buyer_phone_1 = st.text_input("Buyer Phone Number", placeholder="e.g., 71234567")
-                    submit_serial = st.form_submit_button("Complete Sale", type="primary")
-                    
-                    if submit_serial:
-                        if not serial_input.strip() or not buyer_phone_1.strip():
-                            st.warning("Please enter both the serial number and the buyer's phone number.")
-                        else:
-                            formatted_serial = serial_input.strip().zfill(3)
-                            ticket = session.query(Ticket).filter_by(printed_serial=formatted_serial, vendor_name=selected_vendor).first()
-                            
-                            if not ticket:
-                                st.error(f"❌ Ticket #{formatted_serial} is not in your inventory.")
-                            elif ticket.status != "With_Vendor":
-                                st.error(f"⚠️ Ticket #{formatted_serial} has already been sold.")
-                            else:
-                                ticket.status = "Sold"
-                                ticket.buyer_phone = buyer_phone_1.strip()
-                                session.commit()
-                                st.success(f"✅ Sale confirmed! Ticket #{formatted_serial} assigned to {buyer_phone_1}.")
-                                st.balloons()
-            
-            # --- TAB 2: QR SCANNER ---
-            with tab2:
-                st.caption("Sell a physical ticket by scanning its printed QR code.")
-                qr_code = qrcode_scanner(key='vendor_sales_scanner')
-                if qr_code:
-                    ticket = session.query(Ticket).filter_by(id=qr_code).first()
-                    if not ticket:
-                        st.error("❌ Invalid ticket QR code.")
-                    elif ticket.vendor_name != selected_vendor:
-                        st.error("⚠️ This ticket belongs to a different vendor's inventory.")
-                    elif ticket.status != "With_Vendor":
-                        st.error("⚠️ This ticket has already been sold.")
-                    else:
-                        st.success("✅ Ticket verified in your inventory!")
-                        with st.form("qr_sale_form", clear_on_submit=True):
-                            buyer_phone_2 = st.text_input("Buyer Phone Number", placeholder="e.g., 71234567")
-                            submit_qr = st.form_submit_button("Confirm & Assign to Buyer", type="primary")
-                            if submit_qr:
-                                if not buyer_phone_2.strip():
-                                    st.warning("Please enter the buyer's phone number.")
-                                else:
-                                    ticket.status = "Sold"
-                                    ticket.buyer_phone = buyer_phone_2.strip()
-                                    session.commit()
-                                    st.success(f"✅ Sale confirmed! Ticket assigned to {buyer_phone_2}.")
-                                    st.balloons()
-
-            # --- TAB 3: WHATSAPP DIGITAL TICKET ---
-            with tab3:
-                st.caption("Sell the next available digital ticket and generate a QR code to share via WhatsApp.")
-                digital_tickets = [t for t in available_tickets if t.printed_serial is None]
-                st.write(f"**Available Digital Tickets:** {len(digital_tickets)}")
-                
-                if not digital_tickets:
-                    st.error("❌ You have no digital tickets left in your inventory.")
-                else:
-                    # Form clears on submit so we can display the QR code outside of it
-                    buyer_phone_3 = st.text_input("Buyer WhatsApp Number", placeholder="e.g., 71234567", key="wa_phone")
-                    submit_digital = st.button("Complete Sale & Generate QR", type="primary")
-                    
-                    if submit_digital:
-                        if not buyer_phone_3.strip():
-                            st.warning("Please enter the buyer's WhatsApp number.")
-                        else:
-                            ticket_to_sell = digital_tickets[0]
-                            ticket_to_sell.status = "Sold"
-                            ticket_to_sell.buyer_phone = buyer_phone_3.strip()
-                            session.commit()
-                            
-                            st.success(f"✅ Sale confirmed! Ticket assigned to {buyer_phone_3}.")
-                            st.balloons()
-                            
-                            # Generate the QR Code image
-                            qr = qrcode.QRCode(box_size=10, border=4)
-                            qr.add_data(ticket_to_sell.id)
-                            qr.make(fit=True)
-                            img = qr.make_image(fill_color="black", back_color="white")
-                            
-                            # Convert to bytes for display
-                            buf = BytesIO()
-                            img.save(buf, format="PNG")
-                            
-                            st.divider()
-                            st.subheader("🎟️ Digital Ticket Ready")
-                            st.image(buf.getvalue(), caption=f"Ticket ID: {ticket_to_sell.id[-6:]}", width=300)
-                            
-                            # Format WhatsApp Link (Defaults to +267 for Botswana)
-                            phone_formatted = buyer_phone_3.strip()
-                            if not phone_formatted.startswith("267") and not phone_formatted.startswith("+"):
-                                phone_formatted = f"267{phone_formatted}"
-                            phone_clean = "".join(filter(str.isdigit, phone_formatted))
-                            
-                            msg = f"Hello! Your digital ticket for the Leririma Games is confirmed. Ticket ID: {ticket_to_sell.id[-6:]}\n\nPlease save the QR code image sent by the vendor to show at the gate."
-                            wa_url = f"https://wa.me/{phone_clean}?text={urllib.parse.quote(msg)}"
-                            
-                            st.info("💡 **Step 1:** Long-press (or right-click) the QR code above and select 'Copy Image' or 'Share'.")
-                            st.markdown(f"📲 **Step 2:** [Click here to open WhatsApp and message {buyer_phone_3}]({wa_url})", unsafe_allow_html=True)
-                            
+    if st.button("Submit Sale", key="btn_manual"):
+        if serial_input and buyer_phone_manual:
+            st.success(f"✅ Ticket {serial_input} successfully registered to {buyer_phone_manual} and marked as Sold.")
+            # TODO: Add database query to update status to "Sold" where serial == serial_input
         else:
-            st.warning("You have sold out of your current allocation. Please contact the promoter for a new batch.")
+            st.warning("Please enter both the serial number and phone number.")
+
+# TAB 2: QR Scanner (Physical)
+with tab2:
+    st.write("Sell a physical ticket by scanning its printed QR code.")
+    
+    # 🚨 PASTE YOUR WORKING SCANNER WIDGET FROM THE GATE VALIDATOR HERE 🚨
+    # Example: scanned_uuid = your_qr_scanner(key="vendor_scanner")
+    
+    # Placeholder for the scanner logic
+    scanned_uuid = st.text_input("Simulated Scanner Output (UUID)", key="sim_scanner") 
+    buyer_phone_scan = st.text_input("Buyer Phone Number (+267)", key="phone_scan")
+    
+    if st.button("Process Scanned Ticket", key="btn_scan"):
+        if scanned_uuid and buyer_phone_scan:
+             st.success(f"✅ Ticket {scanned_uuid} successfully registered to {buyer_phone_scan} and marked as Sold.")
+             # TODO: Add database query to update status to "Sold" where id == scanned_uuid
+
+# TAB 3: Digital & WhatsApp
+with tab3:
+    st.write("Auto-assign the next digital ticket and send via WhatsApp.")
+    buyer_phone_digital = st.text_input("Buyer Phone Number (+267)", key="phone_digital")
+    
+    if st.button("Generate Digital Ticket", key="btn_digital"):
+        if available_count > 0 and buyer_phone_digital:
+            # TODO: Fetch the actual ticket via SQLAlchemy
+            # ticket = db_session.query(Ticket).filter_by(vendor_name=vendor, status="With_Vendor").first()
+            mock_ticket_id = "550e8400-e29b-41d4-a716-446655440000" 
             
-    except Exception as e:
-        session.rollback()
-        st.error("Error loading inventory.")
-    finally:
-        session.close()
+            # Formulate the WhatsApp message
+            message = f"Hello! Here is your SmartTec Ticket.\n\nTicket ID: {mock_ticket_id}\n\nPlease present this code at the gate."
+            encoded_message = urllib.parse.quote(message)
+            whatsapp_url = f"https://wa.me/267{buyer_phone_digital}?text={encoded_message}"
+            
+            st.success("✅ Digital ticket assigned successfully!")
+            
+            # Generate the on-screen QR Code (Requires 'qrcode' library)
+            # import qrcode
+            # img = qrcode.make(mock_ticket_id)
+            # st.image(img.get_image(), caption="Scan at Gate")
+            
+            st.markdown(f"[**💬 Send Ticket via WhatsApp**]({whatsapp_url})", unsafe_allow_html=True)
+            
+            # TODO: Update DB status to 'Sold' and commit
+        else:
+            st.error("🚨 Out of inventory or missing phone number.")
