@@ -63,17 +63,12 @@ class Event(Base):
 
 
 class Vendor(Base):
-    """The Authorized Sellers"""
+    """The Authorized Sellers (Global)"""
     __tablename__ = 'vendors'
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, unique=True)
     phone = Column(String)
-    
-    # Lock the vendor to a specific event
-    event_id = Column(Integer, ForeignKey('events.id'))
-    
-    event = relationship("Event", back_populates="vendors")
 
 
 class Ticket(Base):
