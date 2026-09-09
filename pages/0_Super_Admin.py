@@ -1,13 +1,13 @@
 import streamlit as st
 import datetime
-from models import SessionLocal, Client, Event
+import pandas as pd
+from models import SessionLocal, Client, Event, Vendor, Ticket
 
-st.set_page_config(page_title="Super Admin Dashboard", page_icon="👑")
+st.set_page_config(page_title="Super Admin Dashboard", page_icon="👑", layout="wide")
 st.title("👑 M.Marumo Technologies Admin")
-st.caption("Global master control for SmartTec Ticket clients and events.")
+st.caption("Global master control and stakeholder overview for SmartTec Ticket.")
 
-# Create tabs to organize the dashboard
-tab1, tab2 = st.tabs(["🏢 Onboard New Client", "📅 Create Event"])
+tab1, tab2, tab3 = st.tabs(["🏢 Onboard Client", "📅 Create Event", "📊 System Overview"])
 
 # --- TAB 1: CREATE CLIENT ---
 with tab1:
@@ -15,7 +15,6 @@ with tab1:
     with st.form("client_form"):
         client_name = st.text_input("Client / Promoter Name", placeholder="e.g., Kudu Entertainment")
         client_phone = st.text_input("Contact Phone", placeholder="e.g., +267 71 234 567")
-        
         submit_client = st.form_submit_button("Register Client", type="primary")
         
         if submit_client:
@@ -37,7 +36,6 @@ with tab1:
 # --- TAB 2: CREATE EVENT ---
 with tab2:
     st.subheader("Initialize New Event")
-    
     session = SessionLocal()
     clients = session.query(Client).all()
     client_options = {c.name: c.id for c in clients}
@@ -49,7 +47,6 @@ with tab2:
             selected_client = st.selectbox("Assign to Client", list(client_options.keys()))
             event_name = st.text_input("Event Name", placeholder="e.g., December Total Football Mania")
             event_date = st.date_input("Event Date", min_value=datetime.date.today())
-            
             submit_event = st.form_submit_button("Initialize Event", type="primary")
             
             if submit_event:
@@ -68,4 +65,67 @@ with tab2:
                     except Exception as e:
                         session.rollback()
                         st.error(f"Error creating event: {e}")
+    session.close()
+
+# --- TAB 3: SYSTEM OVERVIEW (STAKEHOLDERS) ---
+with tab3:
+    st.subheader("Global Stakeholders & Financial Status")
+    session = SessionLocal()
+    
+    # 1. Promoters & Events View
+    st.markdown("### 🏢 Promoters & Events")
+    all_clients = session.query(Client).all()
+    
+    if not all_clients:
+        st.info("No promoters registered in the system yet.")
+    else:
+        today = datetime.date.today()
+        for client in all_clients:
+            client_events = session.query(Event).filter_by(client_id=client.id).all()
+            with st.expander(f"Promoter: {client.name} | 📞 {client.contact_phone or 'N/A'}"):
+                if not client_events:
+                    st.warning("Status: ⚪ Inactive (No events registered)")
+                else:
+                    st.success(f"Status: 🟢 Active ({len(client_events)} Event(s))")
+                    event_data = []
+                    for ev in client_events:
+                        ev_date = ev.event_date.date() if isinstance(ev.event_date, datetime.datetime) else ev.event_date
+                        if ev_date:
+                            status = "🟢 Upcoming / Today" if ev_date >= today else "🔴 Completed"
+                            date_str = ev_date.strftime("%Y-%m-%d")
+                        else:
+                            status = "⚪ Unknown"
+                            date_str = "Not Set"
+                            
+                        ticket_count = session.query(Ticket).filter_by(event_id=ev.id).count()
+                        event_data.append({
+                            "Event Name": ev.name,
+                            "Date": date_str,
+                            "Status": status,
+                            "Total Tickets": ticket_count
+                        })
+                    st.table(pd.DataFrame(event_data))
+    
+    st.divider()
+
+    # 2. Global Vendors & Financials View
+    st.markdown("### 👥 Global Authorized Vendors & Financials")
+    all_vendors = session.query(Vendor).all()
+    
+    if not all_vendors:
+        st.info("No vendors registered in the system yet.")
+    else:
+        vendor_data = []
+        for v in all_vendors:
+            vendor_data.append({
+                "Vendor Name": v.name,
+                "Phone": v.phone or "N/A",
+                "Status": v.status,
+                "Allocated Tickets": v.allocated_count,
+                "Sold": v.sold_count,
+                "Expected Revenue": f"P {v.expected_revenue:.2f}",
+                "Remitted": f"P {v.remitted_funds:.2f}"
+            })
+        st.dataframe(pd.DataFrame(vendor_data), use_container_width=True)
+
     session.close()
