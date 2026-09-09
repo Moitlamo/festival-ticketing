@@ -59,7 +59,7 @@ class Event(Base):
     # Relationships mapping back and forth
     client = relationship("Client", back_populates="events")
     tickets = relationship("Ticket", back_populates="event")
-    vendors = relationship("Vendor", back_populates="event")
+   
 
 
 class Vendor(Base):
