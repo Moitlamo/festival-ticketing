@@ -27,16 +27,21 @@ Base = declarative_base()
 # 2. ENHANCED MULTI-TENANT MODELS
 # ==========================================
 
-class Client(Base):
-    """The Event Organizer or Promoter"""
-    __tablename__ = 'clients'
+class Event(Base):
+    """The Specific Function"""
+    __tablename__ = 'events'
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)
-    contact_phone = Column(String)
-    account_status = Column(String, default="Active") 
+    name = Column(String, nullable=False)
+    event_date = Column(DateTime)
     
-    events = relationship("Event", back_populates="client")
+    # --- THE NEW SECURITY COLUMN ---
+    gate_pin = Column(String, nullable=False, default="1234") 
+    
+    client_id = Column(Integer, ForeignKey('clients.id'))
+    
+    client = relationship("Client", back_populates="events")
+    tickets = relationship("Ticket", back_populates="event")
 
 
 class Event(Base):
