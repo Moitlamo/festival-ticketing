@@ -27,9 +27,23 @@ Base = declarative_base()
 # 2. ENHANCED MULTI-TENANT MODELS
 # ==========================================
 
+class Client(Base):
+    """The Event Organizer or Promoter"""
+    __tablename__ = 'clients'
+    __table_args__ = {'extend_existing': True} # Fixes Streamlit caching crashes
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    contact_phone = Column(String)
+    account_status = Column(String, default="Active") 
+    
+    events = relationship("Event", back_populates="client")
+
+
 class Event(Base):
     """The Specific Function"""
     __tablename__ = 'events'
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
@@ -44,35 +58,20 @@ class Event(Base):
     tickets = relationship("Ticket", back_populates="event")
 
 
-class Event(Base):
-    """The Specific Function"""
-    __tablename__ = 'events'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    event_date = Column(DateTime)
-    
-    client_id = Column(Integer, ForeignKey('clients.id'))
-    
-    client = relationship("Client", back_populates="events")
-    tickets = relationship("Ticket", back_populates="event")
-
-
 class Vendor(Base):
     """Global Authorized Sellers"""
     __tablename__ = 'vendors'
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
     phone = Column(String)
     
-    # Financial and Status Tracking
     status = Column(String, default="Active") 
     remitted_funds = Column(Float, default=0.0)
     
     tickets = relationship("Ticket", back_populates="vendor_profile")
 
-    # Dynamic Dashboard Metrics
     @property
     def allocated_count(self):
         return len(self.tickets)
@@ -89,12 +88,12 @@ class Vendor(Base):
 class Ticket(Base):
     """Digital/Physical Inventory"""
     __tablename__ = 'tickets'
+    __table_args__ = {'extend_existing': True}
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(Integer, ForeignKey('events.id'))
     vendor_id = Column(Integer, ForeignKey('vendors.id'), nullable=True) 
     
-    # Original Ticket Data
     ticket_type = Column(String)
     price = Column(Float, default=0.0) 
     status = Column(String, default="Unassigned") 
@@ -104,7 +103,6 @@ class Ticket(Base):
     printed_serial = Column(String)
     sold_by = Column(String)
     
-    # Gate Validation Metrics
     scanned_at_gate = Column(Boolean, default=False)
     scan_timestamp = Column(DateTime, nullable=True)
     
