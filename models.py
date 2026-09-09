@@ -1,51 +1,68 @@
-from sqlalchemy import Column, String, DateTime
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-import streamlit as st
-import datetime
 import uuid
-
-# Database connection setup
-DATABASE_URL = st.secrets["DATABASE_URL"]
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.dialects.postgresql import UUID
 
 Base = declarative_base()
 
-class Ticket(Base):
-    __tablename__ = "tickets"
+# --- 1. CLIENT MODEL (The Event Organizer) ---
+class Client(Base):
+    __tablename__ = 'clients'
     
-    # Core Identity with automatic UUID string generation
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())) 
-    ticket_type = Column(String, nullable=False)
-    status = Column(String, default="With_Vendor")
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    contact_phone = Column(String)
     
-    # Security & Physical Tracking
-    security_pin = Column(String, nullable=True)
-    printed_serial = Column(String, nullable=True, unique=True)
-    
-    # Vendor & Buyer Tracking
-    vendor_name = Column(String, nullable=True)
-    buyer_phone = Column(String, nullable=True)
-    
-    # Metadata
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # A client can host multiple events
+    events = relationship("Event", back_populates="client")
 
+
+# --- 2. EVENT MODEL (The Specific Function) ---
+class Event(Base):
+    __tablename__ = 'events'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    event_date = Column(DateTime)
+    
+    # Link to the Client who owns this event
+    client_id = Column(Integer, ForeignKey('clients.id'))
+    
+    # Relationships mapping back and forth
+    client = relationship("Client", back_populates="events")
+    tickets = relationship("Ticket", back_populates="event")
+    vendors = relationship("Vendor", back_populates="event")
+
+
+# --- 3. VENDOR MODEL (The Sellers) ---
 class Vendor(Base):
-    __tablename__ = "vendors"
+    __tablename__ = 'vendors'
     
-    # Core Identity
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name = Column(String, unique=True, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    phone = Column(String)
     
-    # Contact & Location Columns
-    contact_details = Column(String, nullable=True)
-    address = Column(String, nullable=True)
-    location = Column(String, nullable=True)
+    # Lock the vendor to a specific event
+    event_id = Column(Integer, ForeignKey('events.id'))
     
-    # Metadata
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    event = relationship("Event", back_populates="vendors")
 
-# Ensure tables are created (this skips existing tables)
-Base.metadata.create_all(bind=engine)
+
+# --- 4. TICKET MODEL (The Inventory) ---
+class Ticket(Base):
+    __tablename__ = 'tickets'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Lock the ticket to a specific event
+    event_id = Column(Integer, ForeignKey('events.id'))
+    
+    ticket_type = Column(String)
+    status = Column(String, default="Unassigned")
+    security_pin = Column(String)
+    vendor_name = Column(String) 
+    buyer_phone = Column(String)
+    printed_serial = Column(String)
+    sold_by = Column(String)
+    
+    event = relationship("Event", back_populates="tickets")
