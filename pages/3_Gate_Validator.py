@@ -1,76 +1,98 @@
 import streamlit as st
 import datetime
 from streamlit_qrcode_scanner import qrcode_scanner
-from models import SessionLocal, Ticket
+from models import SessionLocal, Ticket, Event
 
 st.set_page_config(page_title="Gate Validator", page_icon="🛡️")
-st.title("🛡️ Live Gate Auto-Scanner")
-st.caption("Point your camera at a ticket. It will scan automatically.")
 
-# --- TICKET VERIFICATION ENGINE ---
-def process_ticket(scanned_uuid):
+# --- 1. GATE LOGIN SYSTEM ---
+# If the operator is not logged in, show ONLY the login screen
+if 'active_event_id' not in st.session_state:
+    st.title("🔐 Gate Scanner Login")
+    st.caption("Enter the Gate Access PIN provided by the event promoter.")
+    
+    with st.form("gate_login"):
+        entered_pin = st.text_input("Gate Access PIN", type="password")
+        submit_login = st.form_submit_button("Access Scanner", type="primary")
+        
+        if submit_login:
+            if not entered_pin:
+                st.error("Please enter a PIN.")
+            else:
+                session = SessionLocal()
+                # Find the exact event linked to this PIN
+                event = session.query(Event).filter_by(gate_pin=entered_pin).first()
+                session.close()
+                
+                if event:
+                    st.session_state['active_event_id'] = event.id
+                    st.session_state['active_event_name'] = event.name
+                    st.success(f"✅ Logged into {event.name}!")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid PIN. Please check with the promoter.")
+    st.stop() # Stops the rest of the page from loading
+
+# --- 2. THE SCANNER INTERFACE ---
+active_event_id = st.session_state['active_event_id']
+active_event_name = st.session_state['active_event_name']
+
+st.title(f"🛡️ Live Gate: {active_event_name}")
+
+# Logout Button
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.caption("Auto-scanner is active and locked to this event.")
+with col2:
+    if st.button("🚪 Logout"):
+        del st.session_state['active_event_id']
+        del st.session_state['active_event_name']
+        st.rerun()
+
+st.divider()
+
+def process_ticket(scanned_uuid, current_event_id):
     clean_uuid = scanned_uuid.strip()
-    session = SessionLocal()
+    local_session = SessionLocal()
     
     try:
-        ticket = session.query(Ticket).filter_by(id=clean_uuid).first()
+        ticket = local_session.query(Ticket).filter_by(id=clean_uuid).first()
         
         if not ticket:
-            st.error("❌ INVALID TICKET: This QR code is not in the database. Fake ticket detected!")
+            st.error("❌ INVALID TICKET: Fake ticket detected!")
         else:
             current_status = str(ticket.status).strip().lower()
             
-            # Check 1: Duplicate Scan
-            if ticket.scanned_at_gate:
-                scan_time = ticket.scan_timestamp.strftime("%H:%M:%S") if ticket.scan_timestamp else "Unknown Time"
-                st.error(f"🛑 DUPLICATE SCAN: Already used at {scan_time}!")
-                
-            # Check 2: Financial Guardrail (Blocks unsold tickets)
+            if ticket.event_id != current_event_id:
+                st.error("🚨 WRONG EVENT BLOCKED! This ticket cannot be used here.")
+            elif ticket.scanned_at_gate:
+                st.error("🛑 DUPLICATE SCAN: Already used!")
             elif current_status != "sold":
-                st.warning(f"⚠️ UNPAID TICKET BLOCKED! Vendor '{ticket.vendor_name}' has not processed this sale.")
-                
-            # Check 3: Grant Entry
+                st.warning("⚠️ UNPAID TICKET BLOCKED!")
             elif current_status == "sold":
                 ticket.scanned_at_gate = True
                 ticket.scan_timestamp = datetime.datetime.now()
-                session.commit()
-                
-                event_name = ticket.event.name if ticket.event else "Event"
-                st.success(f"✅ ACCESS GRANTED: Valid ticket for {event_name}.")
-                st.info(f"Vendor: {ticket.vendor_name} | Price: P {ticket.price}")
+                local_session.commit()
+                st.success("✅ ACCESS GRANTED!")
                 
     except Exception as e:
-        session.rollback()
-        st.error(f"Error during scan: {e}")
+        local_session.rollback()
     finally:
-        session.close()
+        local_session.close()
 
-# --- SCANNER INTERFACE ---
 tab1, tab2 = st.tabs(["📷 Auto-Scan Camera", "⌨️ Manual Entry"])
 
 with tab1:
-    st.markdown("### Point Camera at QR Code")
-    st.info("Ensure the QR code is well-lit and in focus.")
-    
-    # This renders the LIVE video feed and auto-scans
     qr_code = qrcode_scanner(key='qr_scanner')
-    
-    # When a code is detected, process it
     if qr_code:
-        # We use session state so the scanner doesn't spam the same ticket 10 times a second
         if 'last_scanned' not in st.session_state or st.session_state['last_scanned'] != qr_code:
             st.session_state['last_scanned'] = qr_code
-            process_ticket(qr_code)
-            
-        # Button to clear the screen for the next person in line
+            process_ticket(qr_code, active_event_id)
         if st.button("🔄 Scan Next Ticket", type="primary", use_container_width=True):
             st.session_state['last_scanned'] = None
             st.rerun()
 
 with tab2:
-    st.markdown("### Backup Scanner")
-    st.info("Use this if a printed QR code is torn or unreadable.")
-    manual_uuid = st.text_input("Type UUID or use physical scanner gun:", key="manual_input")
-    
+    manual_uuid = st.text_input("Type UUID or use physical scanner gun:")
     if manual_uuid:
-        process_ticket(manual_uuid)
+        process_ticket(manual_uuid, active_event_id)
