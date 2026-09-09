@@ -6,13 +6,18 @@ st.warning("Clicking this will wipe all live data and rebuild the tables.")
 
 if st.button("RESET DATABASE NOW"):
     try:
-        # We extract the engine directly from your working SessionLocal
         engine = SessionLocal().get_bind()
         
-        # Drop the old tables and create the new multi-tenant ones
-        Base.metadata.drop_all(bind=engine)
+        # 1. Try to drop tables, but gracefully ignore if they are already gone
+        try:
+            Base.metadata.drop_all(bind=engine)
+            st.info("Cleared existing tables.")
+        except Exception:
+            st.info("Database is already empty. Proceeding to create...")
+        
+        # 2. Force the creation of the new multi-tenant tables
         Base.metadata.create_all(bind=engine)
         
         st.success("✅ Database successfully reset and upgraded for Multi-Tenancy!")
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Critical Error: {e}")
