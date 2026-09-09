@@ -1,71 +1,53 @@
 import streamlit as st
+import datetime
 from models import SessionLocal, Ticket
-from streamlit_qrcode_scanner import qrcode_scanner
 
-st.set_page_config(page_title="Gate Scanner", page_icon="📱")
-st.title("📱 Gate Validator")
+st.set_page_config(page_title="Gate Validator", page_icon="🛡️")
+st.title("🛡️ Live Gate Scanner (Diagnostic Mode)")
+st.caption("Verify QR codes and track live event entry.")
 
-# Create mobile-friendly tabs to switch between Digital and Physical
-tab1, tab2 = st.tabs(["📷 Digital QR Scanner", "⌨️ Physical Ticket Entry"])
+st.markdown("### Scan Ticket QR Code")
+scanned_uuid = st.text_input("Click here and scan QR code (or type UUID):", key="scanner_input")
 
-# ----------------- TAB 1: DIGITAL QR SCANNER -----------------
-with tab1:
-    st.caption("Hold the digital QR code up to the camera.")
+if scanned_uuid:
+    # Clean the input in case the scanner adds hidden spaces
+    clean_uuid = scanned_uuid.strip()
+    session = SessionLocal()
     
-    # Launch the camera scanner
-    qr_code = qrcode_scanner(key='scanner')
-    
-    if qr_code:
-        session = SessionLocal()
-        try:
-            # Look up the digital ticket by its UUID
-            ticket = session.query(Ticket).filter_by(id=qr_code).first()
-            
-            if not ticket:
-                st.error("❌ INVALID TICKET: QR Code not recognized in the database.")
-            elif ticket.status == "Used":
-                st.error("⚠️ ALREADY SCANNED: This ticket has already entered the venue!")
-            else:
-                ticket.status = "Used"
-                session.commit()
-                st.success("✅ VALID: Digital ticket accepted. Grant Entry!")
-                st.balloons()
-        except Exception as e:
-            session.rollback()
-            st.error("🚨 Connection Error. Please try again.")
-        finally:
-            session.close()
-
-
-# ----------------- TAB 2: PHYSICAL TICKET PAD -----------------
-with tab2:
-    st.caption("Type the 3-digit serial number from the pre-printed ticket.")
-    
-    with st.form("validation_form", clear_on_submit=True):
-        serial_input = st.text_input("Ticket Serial Number", max_chars=3, placeholder="e.g., 251")
-        submitted = st.form_submit_button("VALIDATE PHYSICAL TICKET", type="primary", use_container_width=True)
-
-    if submitted:
-        if not serial_input.strip():
-            st.warning("Please enter a ticket number.")
+    try:
+        # 1. Look up the ticket
+        ticket = session.query(Ticket).filter_by(id=clean_uuid).first()
+        
+        if not ticket:
+            st.error("❌ INVALID TICKET: This QR code is not in the database.")
         else:
-            formatted_serial = serial_input.strip().zfill(3)
+            # --- DIAGNOSTIC OUTPUT ---
+            # This will show us exactly what is saved in the database
+            st.info(f"🔍 DEBUG: The database says this ticket status is: '{ticket.status}'")
             
-            session = SessionLocal()
-            try:
-                ticket = session.query(Ticket).filter_by(printed_serial=formatted_serial).first()
+            # Normalize the status text to prevent capitalization or space errors
+            current_status = str(ticket.status).strip().lower()
+            
+            # 2. Check if already scanned
+            if ticket.scanned_at_gate:
+                scan_time = ticket.scan_timestamp.strftime("%H:%M:%S") if ticket.scan_timestamp else "Unknown Time"
+                st.error(f"🛑 DUPLICATE SCAN: Already used at {scan_time}!")
                 
-                if not ticket:
-                    st.error(f"❌ INVALID TICKET: #{formatted_serial} does not exist.")
-                elif ticket.status == "Used":
-                    st.error(f"⚠️ ALREADY SCANNED: #{formatted_serial} has already entered!")
-                else:
-                    ticket.status = "Used"
-                    session.commit()
-                    st.success(f"✅ VALID: #{formatted_serial} accepted. Grant Entry!")
-                    st.balloons()
-            except Exception as e:
-                session.rollback()
-                st.error("🚨 Connection Error. Please try again.")
-            finally:
-                session.close()
+            # 3. STRICT FINANCIAL GUARDRAIL
+            elif current_status != "sold":
+                st.warning(f"⚠️ UNPAID TICKET BLOCKED! Status is '{ticket.status}'. Vendor {ticket.vendor_name} has not processed this sale.")
+                
+            # 4. Grant entry only if strictly sold
+            elif current_status == "sold":
+                ticket.scanned_at_gate = True
+                ticket.scan_timestamp = datetime.datetime.now()
+                session.commit()
+                
+                event_name = ticket.event.name if ticket.event else "Event"
+                st.success(f"✅ ACCESS GRANTED: Valid ticket for {event_name}.")
+                
+    except Exception as e:
+        session.rollback()
+        st.error(f"Error during scan: {e}")
+    finally:
+        session.close()
