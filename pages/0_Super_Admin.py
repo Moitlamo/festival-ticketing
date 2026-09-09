@@ -45,34 +45,41 @@ with tab2:
     else:
         with st.form("event_form"):
             selected_client = st.selectbox("Assign to Client", list(client_options.keys()))
-            event_name = st.text_input("Event Name", placeholder="e.g., December Total Football Mania")
+            event_name = st.text_input("Event Name", placeholder="e.g., Total Football Mania Soccer Tournament")
             event_date = st.date_input("Event Date", min_value=datetime.date.today())
+            
+            # --- NEW FIELD: CUSTOM GATE PIN ---
+            st.markdown("#### Security Settings")
+            gate_pin_input = st.text_input("Set Gate Access PIN (Bouncers will use this to login)", value="1234", type="password")
+            
             submit_event = st.form_submit_button("Initialize Event", type="primary")
             
             if submit_event:
                 if not event_name:
                     st.error("Event name is required.")
+                elif not gate_pin_input:
+                    st.error("Gate Access PIN is required.")
                 else:
                     try:
                         new_event = Event(
                             name=event_name,
                             event_date=event_date,
+                            gate_pin=gate_pin_input, # Saves the custom PIN to the database
                             client_id=client_options[selected_client]
                         )
                         session.add(new_event)
                         session.commit()
-                        st.success(f"✅ Event '{event_name}' created under {selected_client}!")
+                        st.success(f"✅ Event '{event_name}' created under {selected_client} with PIN protection!")
                     except Exception as e:
                         session.rollback()
                         st.error(f"Error creating event: {e}")
     session.close()
 
-# --- TAB 3: SYSTEM OVERVIEW (STAKEHOLDERS) ---
+# --- TAB 3: SYSTEM OVERVIEW ---
 with tab3:
     st.subheader("Global Stakeholders & Financial Status")
     session = SessionLocal()
     
-    # 1. Promoters & Events View
     st.markdown("### 🏢 Promoters & Events")
     all_clients = session.query(Client).all()
     
@@ -102,13 +109,13 @@ with tab3:
                             "Event Name": ev.name,
                             "Date": date_str,
                             "Status": status,
+                            "Gate PIN": ev.gate_pin, # Allows Super Admin to view the PIN
                             "Total Tickets": ticket_count
                         })
                     st.table(pd.DataFrame(event_data))
     
     st.divider()
 
-    # 2. Global Vendors & Financials View
     st.markdown("### 👥 Global Authorized Vendors & Financials")
     all_vendors = session.query(Vendor).all()
     
