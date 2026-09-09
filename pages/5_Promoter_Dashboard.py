@@ -1,108 +1,53 @@
 import streamlit as st
-import pandas as pd
-from models import SessionLocal, Client, Event, Ticket
+import datetime
+from models import SessionLocal, Ticket
 
-st.set_page_config(page_title="Promoter Dashboard", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Gate Validator", page_icon="🛡️")
+st.title("🛡️ Live Gate Scanner")
+st.caption("Verify QR codes and track live event entry.")
 
-# --- CUSTOM CSS CARDS ---
-# This function generates the brightly colored metric blocks
-def create_stat_card(title, value, color_hex, icon):
-    html = f"""
-    <div style="
-        background-color: {color_hex}; 
-        padding: 20px; 
-        border-radius: 10px; 
-        color: white; 
-        text-align: center; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin-bottom: 20px;">
-        <h3 style="margin: 0; font-size: 1.2rem; color: rgba(255,255,255,0.9); font-weight: normal;">{icon} {title}</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: white;">{value}</h1>
-    </div>
-    """
-    return html
+# --- SCANNER INTERFACE ---
+st.markdown("### Scan Ticket QR Code")
+# Depending on your scanner hardware, it usually acts like a keyboard pasting the UUID and hitting Enter
+scanned_uuid = st.text_input("Click here and scan QR code (or type UUID):", key="scanner_input")
 
-st.title("📈 Promoter Command Center")
-st.caption("Live, real-time analytics and gate tracking for your events.")
-
-session = SessionLocal()
-
-# 1. Select the Promoter (Client)
-clients = session.query(Client).all()
-if not clients:
-    st.warning("No promoters found. Please register a client in the Super Admin panel.")
-else:
-    client_dict = {c.name: c for c in clients}
+if scanned_uuid:
+    session = SessionLocal()
     
-    col_a, col_b = st.columns([1, 2])
-    with col_a:
-        selected_client_name = st.selectbox("1. Select Promoter Profile", list(client_dict.keys()))
-        current_client = client_dict[selected_client_name]
-    
-    # 2. Select the Event belonging to that Promoter
-    client_events = session.query(Event).filter_by(client_id=current_client.id).all()
-    
-    if not client_events:
-        st.info(f"⚪ {selected_client_name} does not have any active events.")
-    else:
-        event_dict = {e.name: e for e in client_events}
-        with col_b:
-            selected_event_name = st.selectbox("2. Select Event Dashboard", list(event_dict.keys()))
-            current_event = event_dict[selected_event_name]
+    try:
+        # 1. Look up the ticket in the database
+        ticket = session.query(Ticket).filter_by(id=scanned_uuid).first()
         
-        st.divider()
-        
-        # --- FETCH LIVE DATA ---
-        all_event_tickets = session.query(Ticket).filter_by(event_id=current_event.id).all()
-        
-        # Calculate Metrics
-        total_tickets = len(all_event_tickets)
-        sold_tickets = sum(1 for t in all_event_tickets if t.status == "Sold")
-        pending_tickets = total_tickets - sold_tickets # Anything not sold is pending
-        live_gate_in = sum(1 for t in all_event_tickets if t.scanned_at_gate == True)
-        expected_revenue = sum(t.price for t in all_event_tickets if t.status == "Sold" and t.price)
-        
-        # --- DISPLAY COLORED CARDS ---
-        st.markdown(f"### Live Status: {selected_event_name}")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            # RED CARD: Pending / Unsold
-            st.markdown(create_stat_card("Tickets Pending", pending_tickets, "#E53935", "⏳"), unsafe_allow_html=True)
+        if not ticket:
+            # FATAL: Ticket does not exist in the system at all
+            st.error("❌ INVALID TICKET: This QR code is not in the SmartTec Ticket database. Fake ticket detected!")
             
-        with col2:
-            # BLUE CARD: Sold Tickets
-            st.markdown(create_stat_card("Tickets Sold", sold_tickets, "#1E88E5", "🎫"), unsafe_allow_html=True)
-            
-        with col3:
-            # GREEN CARD: Live Gate In
-            st.markdown(create_stat_card("Live Gate In", live_gate_in, "#4CAF50", "✅"), unsafe_allow_html=True)
-            
-        # --- EXTRA DETAILS (Financials & Progress) ---
-        st.markdown("### 💰 Financial Overview")
-        st.metric("Total Expected Revenue", f"P {expected_revenue:,.2f}")
-        
-        # Progress Bar for Sales
-        if total_tickets > 0:
-            sales_percentage = (sold_tickets / total_tickets)
-            st.caption(f"Sales Completion: {sales_percentage * 100:.1f}% of {total_tickets} generated tickets.")
-            st.progress(sales_percentage)
-        
-        # Recent Sales Table (Optional view to see what's happening right now)
-        with st.expander("View Recent Ticket Sales"):
-            sold_list = [t for t in all_event_tickets if t.status == "Sold"]
-            if not sold_list:
-                st.write("No sales processed yet.")
+        else:
+            # 2. Check if it has already been used
+            if ticket.scanned_at_gate:
+                scan_time = ticket.scan_timestamp.strftime("%H:%M:%S") if ticket.scan_timestamp else "Unknown Time"
+                st.error(f"🛑 DUPLICATE SCAN: This ticket was already used to enter at {scan_time}!")
+                
+            # 3. THE NEW FINANCIAL GUARDRAIL: Check if it was actually sold
+            elif ticket.status != "Sold":
+                st.warning(f"⚠️ UNPAID TICKET: This ticket belongs to {ticket.vendor_name} but was never marked as Sold in the portal. Entry Denied.")
+                
+            # 4. If it passes all checks, grant entry!
             else:
-                sales_data = []
-                for t in sold_list:
-                    sales_data.append({
-                        "Ticket Type": t.ticket_type,
-                        "Price": f"P {t.price}",
-                        "Sold By Vendor": t.vendor_name,
-                        "Scanned at Gate?": "Yes" if t.scanned_at_gate else "No"
-                    })
-                st.dataframe(pd.DataFrame(sales_data), use_container_width=True)
-
-session.close()
+                ticket.scanned_at_gate = True
+                ticket.scan_timestamp = datetime.datetime.now()
+                session.commit()
+                
+                # Fetch event name safely through the relationship
+                event_name = ticket.event.name if ticket.event else "Event"
+                
+                st.success(f"✅ ACCESS GRANTED: Valid {ticket.ticket_type} for {event_name}.")
+                st.info(f"Vendor: {ticket.vendor_name} | Price: P {ticket.price}")
+                
+    except ValueError:
+        st.error("Invalid QR Code format. Please scan a valid SmartTec ticket.")
+    except Exception as e:
+        session.rollback()
+        st.error(f"Database error during scan: {e}")
+    finally:
+        session.close()
