@@ -7,4 +7,5 @@ Pillow
 streamlit-qrcode-scanner
 psycopg2-binary
 pyzbar
-
+opencv-python-headless
+numpy
