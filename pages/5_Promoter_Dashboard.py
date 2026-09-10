@@ -56,7 +56,6 @@ else:
         sold_tickets = sum(1 for t in all_event_tickets if t.status == "Sold")
         pending_tickets = total_tickets - sold_tickets
         live_gate_in = sum(1 for t in all_event_tickets if t.scanned_at_gate == True)
-        expected_revenue = sum(t.price for t in all_event_tickets if t.status == "Sold" and t.price)
         
         # --- DISPLAY COLORED CARDS ---
         st.markdown(f"### Live Status: {selected_event_name}")
@@ -69,13 +68,62 @@ else:
         with col3:
             st.markdown(create_stat_card("Live Gate In", live_gate_in, "#4CAF50", "✅"), unsafe_allow_html=True)
             
+        # --- FINANCIAL OVERVIEW ---
         st.markdown("### 💰 Financial Overview")
-        st.metric("Total Expected Revenue", f"P {expected_revenue:,.2f}")
+        realized_revenue = sum(t.price for t in all_event_tickets if t.status == "Sold" and t.price)
+        potential_revenue = sum(t.price for t in all_event_tickets if t.price)
+        
+        fin_col1, fin_col2 = st.columns(2)
+        with fin_col1:
+            st.metric(label="Money Collected (Sold Tickets)", value=f"P {realized_revenue:,.2f}")
+        with fin_col2:
+            st.metric(label="Max Potential Revenue (If Sold Out)", value=f"P {potential_revenue:,.2f}")
         
         if total_tickets > 0:
             sales_percentage = (sold_tickets / total_tickets)
-            st.caption(f"Sales Completion: {sales_percentage * 100:.1f}% of {total_tickets} generated tickets.")
+            st.caption(f"Overall Sales Completion: {sales_percentage * 100:.1f}% of {total_tickets} generated tickets.")
             st.progress(sales_percentage)
+            
+        st.divider()
+
+        # --- NEW FEATURE: VENDOR PERFORMANCE TRACKER ---
+        st.markdown("### 🏅 Vendor Performance breakdown")
+        st.caption("Click on a vendor below to view their detailed sales statistics.")
+        
+        # Find all unique vendors who were assigned tickets for this specific event
+        vendor_names = set(t.vendor_name for t in all_event_tickets if t.vendor_name)
+        
+        if not vendor_names:
+            st.info("No vendors have been issued tickets for this event yet.")
+        else:
+            for v_name in sorted(vendor_names):
+                # Filter tickets for this specific vendor
+                v_tickets = [t for t in all_event_tickets if t.vendor_name == v_name]
+                v_total = len(v_tickets)
+                v_sold = sum(1 for t in v_tickets if t.status == "Sold")
+                v_pending = v_total - v_sold
+                v_gate_in = sum(1 for t in v_tickets if t.scanned_at_gate == True)
+                v_revenue = sum(t.price for t in v_tickets if t.status == "Sold" and t.price)
+                
+                # The clickable expander bar
+                with st.expander(f"👤 {v_name} — Sold: {v_sold} / {v_total} tickets"):
+                    
+                    # Detailed Stats inside the drop-down
+                    v_col1, v_col2, v_col3, v_col4 = st.columns(4)
+                    v_col1.metric("Allocated to Vendor", v_total)
+                    v_col2.metric("Tickets Sold", v_sold)
+                    v_col3.metric("Tickets Pending", v_pending)
+                    v_col4.metric("Money Collected", f"P {v_revenue:,.2f}")
+                    
+                    # Mini progress bar just for this vendor
+                    if v_total > 0:
+                        v_progress = v_sold / v_total
+                        st.caption(f"{v_name}'s Sales Progress: {v_progress * 100:.1f}%")
+                        st.progress(v_progress)
+                        
+                    st.info(f"**Gate Activity:** {v_gate_in} people who bought tickets from {v_name} have entered the event.")
+
+        st.divider()
         
         with st.expander("View Recent Ticket Sales"):
             sold_list = [t for t in all_event_tickets if t.status == "Sold"]
