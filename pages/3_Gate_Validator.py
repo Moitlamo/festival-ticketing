@@ -100,7 +100,8 @@ def process_ticket(scanned_uuid, current_event_id, mode):
 tab1, tab2 = st.tabs(["📷 Auto-Scan Camera", "⌨️ Manual Entry"])
 
 with tab1:
-    if mode == "🟢 SCAN IN (Grant Entry)":
+    # FIX: Changed 'mode' to 'scan_mode' here
+    if scan_mode == "🟢 SCAN IN (Grant Entry)":
         st.info("Currently Scanning **IN**. Customers will be marked as inside the venue.")
     else:
         st.warning("Currently Scanning **OUT**. Customers will be permitted to exit and re-enter.")
