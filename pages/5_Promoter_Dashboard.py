@@ -1,146 +1,127 @@
 import streamlit as st
 import pandas as pd
+from supabase import create_client, Client
 
-from models import SessionLocal, Client, Event, Ticket
+# 1. Initialize Supabase Client
+try:
+    url: str = st.secrets["SUPABASE_URL"]
+    key: str = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(url, key)
+except Exception as e:
+    st.error(f"Supabase connection failed. Check your secrets. Error: {e}")
 
+st.markdown("<h2 style='color: #8B0000;'>M.Marumo Technologies - Promoter Dashboard</h2>", unsafe_allow_html=True)
+st.write("Real-time tracking of digital ticket sales and physical gate inventory.")
 
-
-st.set_page_config(page_title="Promoter Dashboard", page_icon="📈", layout="wide")
-
-# --- CUSTOM CSS CARDS ---
-def create_stat_card(title, value, color_hex, icon):
-    html = f"""
-    <div style="
-        background-color: {color_hex}; 
-        padding: 20px; 
-        border-radius: 10px; 
-        color: white; 
-        text-align: center; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin-bottom: 20px;">
-        <h3 style="margin: 0; font-size: 1.2rem; color: rgba(255,255,255,0.9); font-weight: normal;">{icon} {title}</h3>
-        <h1 style="margin: 10px 0 0 0; font-size: 3rem; color: white;">{value}</h1>
-    </div>
-    """
-    return html
-
-st.title("📈 Promoter Command Center")
-st.caption("Live, real-time analytics and gate tracking for your events.")
-
-session = SessionLocal()
-
-clients = session.query(Client).all()
-if not clients:
-    st.warning("No promoters found. Please register a client in the Super Admin panel.")
-else:
-    client_dict = {c.name: c for c in clients}
-    
-    col_a, col_b = st.columns([1, 2])
-    with col_a:
-        selected_client_name = st.selectbox("1. Select Promoter Profile", list(client_dict.keys()))
-        current_client = client_dict[selected_client_name]
-    
-    client_events = session.query(Event).filter_by(client_id=current_client.id).all()
-    
-    if not client_events:
-        st.info(f"⚪ {selected_client_name} does not have any active events.")
+# 2. Event Selection
+try:
+    if 'supabase' in locals():
+        events_res = supabase.table("events").select("name").execute()
+        event_options = [e["name"] for e in events_res.data] if events_res.data else []
     else:
-        event_dict = {e.name: e for e in client_events}
-        with col_b:
-            selected_event_name = st.selectbox("2. Select Event Dashboard", list(event_dict.keys()))
-            current_event = event_dict[selected_event_name]
-        
-        st.divider()
-        
-        # --- FETCH LIVE DATA ---
-        all_event_tickets = session.query(Ticket).filter_by(event_id=current_event.id).all()
-        
-        total_tickets = len(all_event_tickets)
-        sold_tickets = sum(1 for t in all_event_tickets if t.status == "Sold")
-        pending_tickets = total_tickets - sold_tickets
-        live_gate_in = sum(1 for t in all_event_tickets if t.scanned_at_gate == True)
-        
-        # --- DISPLAY COLORED CARDS ---
-        st.markdown(f"### Live Status: {selected_event_name}")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(create_stat_card("Tickets Pending", pending_tickets, "#E53935", "⏳"), unsafe_allow_html=True)
-        with col2:
-            st.markdown(create_stat_card("Tickets Sold", sold_tickets, "#1E88E5", "🎫"), unsafe_allow_html=True)
-        with col3:
-            st.markdown(create_stat_card("Live Gate In", live_gate_in, "#4CAF50", "✅"), unsafe_allow_html=True)
-            
-        # --- FINANCIAL OVERVIEW ---
-        st.markdown("### 💰 Financial Overview")
-        realized_revenue = sum(t.price for t in all_event_tickets if t.status == "Sold" and t.price)
-        potential_revenue = sum(t.price for t in all_event_tickets if t.price)
-        
-        fin_col1, fin_col2 = st.columns(2)
-        with fin_col1:
-            st.metric(label="Money Collected (Sold Tickets)", value=f"P {realized_revenue:,.2f}")
-        with fin_col2:
-            st.metric(label="Max Potential Revenue (If Sold Out)", value=f"P {potential_revenue:,.2f}")
-        
-        if total_tickets > 0:
-            sales_percentage = (sold_tickets / total_tickets)
-            st.caption(f"Overall Sales Completion: {sales_percentage * 100:.1f}% of {total_tickets} generated tickets.")
-            st.progress(sales_percentage)
-            
-        st.divider()
+        event_options = []
+except Exception:
+    event_options = []
 
-        # --- NEW FEATURE: VENDOR PERFORMANCE TRACKER ---
-        st.markdown("### 🏅 Vendor Performance breakdown")
-        st.caption("Click on a vendor below to view their detailed sales statistics.")
-        
-        # Find all unique vendors who were assigned tickets for this specific event
-        vendor_names = set(t.vendor_name for t in all_event_tickets if t.vendor_name)
-        
-        if not vendor_names:
-            st.info("No vendors have been issued tickets for this event yet.")
-        else:
-            for v_name in sorted(vendor_names):
-                # Filter tickets for this specific vendor
-                v_tickets = [t for t in all_event_tickets if t.vendor_name == v_name]
-                v_total = len(v_tickets)
-                v_sold = sum(1 for t in v_tickets if t.status == "Sold")
-                v_pending = v_total - v_sold
-                v_gate_in = sum(1 for t in v_tickets if t.scanned_at_gate == True)
-                v_revenue = sum(t.price for t in v_tickets if t.status == "Sold" and t.price)
-                
-                # The clickable expander bar
-                with st.expander(f"👤 {v_name} — Sold: {v_sold} / {v_total} tickets"):
-                    
-                    # Detailed Stats inside the drop-down
-                    v_col1, v_col2, v_col3, v_col4 = st.columns(4)
-                    v_col1.metric("Allocated to Vendor", v_total)
-                    v_col2.metric("Tickets Sold", v_sold)
-                    v_col3.metric("Tickets Pending", v_pending)
-                    v_col4.metric("Money Collected", f"P {v_revenue:,.2f}")
-                    
-                    # Mini progress bar just for this vendor
-                    if v_total > 0:
-                        v_progress = v_sold / v_total
-                        st.caption(f"{v_name}'s Sales Progress: {v_progress * 100:.1f}%")
-                        st.progress(v_progress)
-                        
-                    st.info(f"**Gate Activity:** {v_gate_in} people who bought tickets from {v_name} have entered the event.")
+if not event_options:
+    event_options = ["Leririma Games", "Mahalapye East Finals", "Taupye Soccer Tournament"]
 
-        st.divider()
-        
-        with st.expander("View Recent Ticket Sales"):
-            sold_list = [t for t in all_event_tickets if t.status == "Sold"]
-            if not sold_list:
-                st.write("No sales processed yet.")
-            else:
-                sales_data = []
-                for t in sold_list:
-                    sales_data.append({
-                        "Ticket Type": t.ticket_type,
-                        "Price": f"P {t.price}",
-                        "Sold By": t.vendor_name,
-                        "Scanned?": "Yes" if t.scanned_at_gate else "No"
-                    })
-                st.dataframe(pd.DataFrame(sales_data), use_container_width=True)
+event_name = st.selectbox("Select Event to View", event_options)
 
-session.close()
+st.divider()
+
+if event_name:
+    # -------------------------------------------------------------------------
+    # SECTION A: DIGITAL TICKET SALES
+    # -------------------------------------------------------------------------
+    st.markdown("<h3 style='color: #1E3A8A;'>Digital Ticket Sales</h3>", unsafe_allow_html=True)
+    
+    try:
+        # Assuming your digital tickets are stored in a table named 'tickets'
+        # Adjust the table name if your digital tickets are stored elsewhere
+        tickets_res = supabase.table("tickets").select("*").eq("event_name", event_name).execute()
+        digital_data = tickets_res.data
+    except Exception as e:
+        digital_data = []
+        st.warning(f"Could not load digital tickets. Ensure 'tickets' table exists. ({e})")
+
+    if digital_data:
+        df_digital = pd.DataFrame(digital_data)
+        
+        # Calculate digital totals (Assuming 'price' and 'status' columns exist)
+        total_digital_sold = len(df_digital)
+        total_digital_revenue = df_digital["price"].sum() if "price" in df_digital.columns else 0.0
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Total Digital Tickets Sold", total_digital_sold)
+        col2.metric("Digital Revenue (BWP)", f"P{total_digital_revenue:,.2f}")
+        
+        with st.expander("View Digital Ticket Details"):
+            st.dataframe(df_digital, use_container_width=True, hide_index=True)
+    else:
+        st.info("No digital ticket sales recorded for this event yet.")
+
+    st.divider()
+
+    # -------------------------------------------------------------------------
+    # SECTION B: PHYSICAL GATE TAGS (INVENTORY TRACKER)
+    # -------------------------------------------------------------------------
+    st.markdown("<h3 style='color: #1E3A8A;'>Physical Gate Tags (Inventory Tracker)</h3>", unsafe_allow_html=True)
+    
+    try:
+        inventory_res = supabase.table("inventory").select("*").eq("event_name", event_name).execute()
+        inventory_data = inventory_res.data
+    except Exception as e:
+        inventory_data = []
+        st.error(f"Could not load physical inventory: {e}")
+
+    if inventory_data:
+        df_inv = pd.DataFrame(inventory_data)
+        
+        # Clean up tag names (e.g., LERIRIMAGAMES_DEPLETION_VIP_TAG -> VIP TAG)
+        df_inv["Display Name"] = df_inv["tag_type"].apply(
+            lambda x: x.split('_')[-2] + " " + x.split('_')[-1] if '_' in x else x
+        )
+        
+        # Calculate monetary value
+        df_inv["Unsold Value (BWP)"] = df_inv["price"] * df_inv["stock_count"]
+        
+        total_remaining_tags = df_inv["stock_count"].sum()
+        total_unsold_value = df_inv["Unsold Value (BWP)"].sum()
+
+        col3, col4 = st.columns(2)
+        col3.metric("Physical Tags Remaining at Gate", int(total_remaining_tags))
+        col4.metric("Value of Remaining Stock (BWP)", f"P{total_unsold_value:,.2f}")
+
+        # Display Detailed Breakdown
+        st.dataframe(
+            df_inv[["Display Name", "price", "stock_count", "Unsold Value (BWP)"]].rename(
+                columns={
+                    "price": "Unit Price (BWP)", 
+                    "stock_count": "Tags Remaining at Gate"
+                }
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No physical tags have been allocated for this event yet.")
+
+    st.divider()
+
+    # -------------------------------------------------------------------------
+    # SECTION C: GRAND TOTALS
+    # -------------------------------------------------------------------------
+    if digital_data or inventory_data:
+        st.markdown("<h3 style='color: #8B0000;'>Event Grand Totals</h3>", unsafe_allow_html=True)
+        
+        # Safely calculate grand totals
+        calc_digital_rev = df_digital["price"].sum() if digital_data and "price" in df_digital.columns else 0.0
+        calc_unsold_phys = total_unsold_value if inventory_data else 0.0
+        
+        grand_total_potential = calc_digital_rev + calc_unsold_phys
+        
+        st.metric(
+            label="Total Potential Revenue (Digital Sold + Physical Remaining)", 
+            value=f"P{grand_total_potential:,.2f}"
+        )
