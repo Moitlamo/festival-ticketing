@@ -9,3 +9,6 @@ psycopg2-binary
 pyzbar
 opencv-python-headless
 numpy
+supabase
+
+
