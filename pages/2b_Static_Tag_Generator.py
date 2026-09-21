@@ -1,6 +1,16 @@
 import streamlit as st
 import qrcode
 from io import BytesIO
+from supabase import create_client, Client
+
+# Initialize Supabase client
+# Ensure your .streamlit/secrets.toml file contains SUPABASE_URL and SUPABASE_KEY
+try:
+    url: str = st.secrets["SUPABASE_URL"]
+    key: str = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(url, key)
+except Exception as e:
+    st.error(f"Supabase connection failed. Check your secrets. Error: {e}")
 
 st.markdown("<h2 style='color: #8B0000;'>M.Marumo Technologies - Desk Tag Generator</h2>", unsafe_allow_html=True)
 st.write("Generate static desk codes, set ticket prices, and allocate inventory for specific events.")
@@ -16,7 +26,7 @@ def create_static_qr(tag_string: str) -> BytesIO:
     qr.add_data(tag_string)
     qr.make(fit=True)
 
-    # Deep blue visual theme
+    # Deep blue visual theme for reduced eye strain
     img = qr.make_image(fill_color="#1E3A8A", back_color="white")
     buffer = BytesIO()
     img.save(buffer, format="PNG")
@@ -28,7 +38,18 @@ st.subheader("1. Event & Financial Details")
 col_event, col_price = st.columns(2)
 
 with col_event:
-    event_name = st.text_input("Event Name", placeholder="e.g., Leririma Games")
+    # Attempt to fetch dynamic event names from the 'events' table
+    try:
+        events_res = supabase.table("events").select("name").execute()
+        event_options = [e["name"] for e in events_res.data] if events_res.data else []
+    except Exception:
+        event_options = []
+        
+    # Provide fallback options if the table is empty or doesn't exist yet
+    if not event_options:
+        event_options = ["Leririma Games", "Mahalapye East Finals", "Taupye Soccer Tournament"]
+
+    event_name = st.selectbox("Event Name", event_options)
 
 with col_price:
     ticket_price = st.number_input("Ticket Value (BWP)", min_value=0.0, value=50.0, step=10.0)
@@ -49,7 +70,7 @@ stock_count = st.number_input(f"Number of {selected_label} tags to allocate (Sta
 
 # 3. Generation Logic
 if event_name:
-    # Create a unique QR string tied strictly to this event to prevent cross-event scanning errors
+    # Create a unique QR string tied strictly to this event
     safe_event_prefix = event_name.replace(" ", "").upper()
     exact_qr_string = f"{safe_event_prefix}_{available_tags[selected_label]}"
     total_value = stock_count * ticket_price
