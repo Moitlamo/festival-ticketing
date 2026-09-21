@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from promoter_report_pdf import generate_promoter_dashboard_pdf
+
 from models import SessionLocal, Client, Event, Ticket
 
 
