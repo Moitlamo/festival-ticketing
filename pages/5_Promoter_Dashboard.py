@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from models import SessionLocal, Client, Event, Ticket
 
-from promoter_report_pdf import generate_promoter_dashboard_pdf
+
 
 st.set_page_config(page_title="Promoter Dashboard", page_icon="📈", layout="wide")
 
