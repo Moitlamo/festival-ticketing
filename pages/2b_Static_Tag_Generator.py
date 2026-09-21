@@ -4,7 +4,7 @@ from io import BytesIO
 from supabase import create_client, Client
 
 # Initialize Supabase client
-# Ensure your .streamlit/secrets.toml file contains SUPABASE_URL and SUPABASE_KEY
+# Ensure your Streamlit Cloud Secrets contains SUPABASE_URL and SUPABASE_KEY
 try:
     url: str = st.secrets["SUPABASE_URL"]
     key: str = st.secrets["SUPABASE_KEY"]
@@ -40,12 +40,22 @@ col_event, col_price = st.columns(2)
 with col_event:
     # Attempt to fetch dynamic event names from the 'events' table
     try:
-        events_res = supabase.table("events").select("name").execute()
-        event_options = [e["name"] for e in events_res.data] if events_res.data else []
-    except Exception:
+        # We check if supabase exists before querying to avoid cascading errors
+        if 'supabase' in locals():
+            events_res = supabase.table("events").select("name").execute()
+            if not events_res.data:
+                st.warning("Query succeeded, but the 'events' table is completely empty.")
+                event_options = []
+            else:
+                event_options = [e["name"] for e in events_res.data]
+        else:
+            event_options = []
+    except Exception as e:
+        # This will reveal if RLS is blocking access or if the table doesn't exist
+        st.error(f"Database Error: {e}")
         event_options = []
         
-    # Provide fallback options if the table is empty or doesn't exist yet
+    # Provide fallback options if the table is empty or access is blocked
     if not event_options:
         event_options = ["Leririma Games", "Mahalapye East Finals", "Taupye Soccer Tournament"]
 
@@ -80,17 +90,20 @@ if event_name:
     if st.button(f"Generate & Allocate {selected_label} Inventory"):
         
         # Update Supabase Inventory Pool
-        try:
-            supabase.table("inventory").upsert({
-                "tag_type": exact_qr_string,
-                "event_name": event_name,
-                "price": ticket_price,
-                "stock_count": stock_count
-            }).execute()
-            
-            st.success(f"Successfully allocated {stock_count} {selected_label} tags for '{event_name}' at P{ticket_price:,.2f} each.")
-        except Exception as e:
-            st.warning(f"Database warning: Please ensure 'event_name' and 'price' columns exist in your Supabase 'inventory' table. Error: {e}")
+        if 'supabase' in locals():
+            try:
+                supabase.table("inventory").upsert({
+                    "tag_type": exact_qr_string,
+                    "event_name": event_name,
+                    "price": ticket_price,
+                    "stock_count": stock_count
+                }).execute()
+                
+                st.success(f"Successfully allocated {stock_count} {selected_label} tags for '{event_name}' at P{ticket_price:,.2f} each.")
+            except Exception as e:
+                st.warning(f"Database warning: Please ensure 'event_name' and 'price' columns exist in your Supabase 'inventory' table. Error: {e}")
+        else:
+            st.warning("Skipped database update: Supabase is not connected.")
 
         # Generate the Printable QR Code
         qr_buffer = create_static_qr(exact_qr_string)
