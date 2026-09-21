@@ -4,7 +4,6 @@ from io import BytesIO
 from supabase import create_client, Client
 
 # Initialize Supabase client
-# Ensure your Streamlit Cloud Secrets contains SUPABASE_URL and SUPABASE_KEY
 try:
     url: str = st.secrets["SUPABASE_URL"]
     key: str = st.secrets["SUPABASE_KEY"]
@@ -16,46 +15,28 @@ st.markdown("<h2 style='color: #8B0000;'>M.Marumo Technologies - Desk Tag Genera
 st.write("Generate static desk codes, set ticket prices, and allocate inventory for specific events.")
 
 def create_static_qr(tag_string: str) -> BytesIO:
-    """Generates a high-res static QR code for the desk scanners."""
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=15, 
-        border=4,
-    )
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=15, border=4)
     qr.add_data(tag_string)
     qr.make(fit=True)
-
-    # Deep blue visual theme for reduced eye strain
     img = qr.make_image(fill_color="#1E3A8A", back_color="white")
     buffer = BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)
     return buffer
 
-# 1. Event Selection & Financials
 st.subheader("1. Event & Financial Details")
 col_event, col_price = st.columns(2)
 
 with col_event:
-    # Attempt to fetch dynamic event names from the 'events' table
     try:
-        # We check if supabase exists before querying to avoid cascading errors
         if 'supabase' in locals():
             events_res = supabase.table("events").select("name").execute()
-            if not events_res.data:
-                st.warning("Query succeeded, but the 'events' table is completely empty.")
-                event_options = []
-            else:
-                event_options = [e["name"] for e in events_res.data]
+            event_options = [e["name"] for e in events_res.data] if events_res.data else []
         else:
             event_options = []
     except Exception as e:
-        # This will reveal if RLS is blocking access or if the table doesn't exist
-        st.error(f"Database Error: {e}")
         event_options = []
         
-    # Provide fallback options if the table is empty or access is blocked
     if not event_options:
         event_options = ["Leririma Games", "Mahalapye East Finals", "Taupye Soccer Tournament"]
 
@@ -64,7 +45,6 @@ with col_event:
 with col_price:
     ticket_price = st.number_input("Ticket Value (BWP)", min_value=0.0, value=50.0, step=10.0)
 
-# 2. Expanded Tag Categories
 st.subheader("2. Tag Allocation")
 available_tags = {
     "VIP": "VIP_TAG",
@@ -78,11 +58,9 @@ available_tags = {
 selected_label = st.selectbox("Select Tag Category", list(available_tags.keys()))
 stock_count = st.number_input(f"Number of {selected_label} tags to allocate (Starting Stock)", min_value=1, value=50, step=1)
 
-# 3. Generation Logic
 if event_name:
-    # Create a unique QR string tied strictly to this event
     safe_event_prefix = event_name.replace(" ", "").upper()
-    exact_qr_string = f"{safe_event_prefix}_{available_tags[selected_label]}"
+    exact_qr_string = f"{safe_event_prefix}_DEPLETION_{available_tags[selected_label]}"
     total_value = stock_count * ticket_price
     
     st.info(f"Master Desk Code: **{exact_qr_string}** | Unit Price: **P{ticket_price:,.2f}** | Total Potential Revenue: **P{total_value:,.2f}**")
@@ -98,35 +76,39 @@ if event_name:
                     "price": ticket_price,
                     "stock_count": stock_count
                 }).execute()
-                
                 st.success(f"Successfully allocated {stock_count} {selected_label} tags for '{event_name}' at P{ticket_price:,.2f} each.")
             except Exception as e:
-                st.warning(f"Database warning: Please ensure 'event_name' and 'price' columns exist in your Supabase 'inventory' table. Error: {e}")
-        else:
-            st.warning("Skipped database update: Supabase is not connected.")
+                st.warning(f"Database warning: Could not save inventory. Error: {e}")
 
-        # Generate the Printable QR Code
+        # Generate and store in session state to prevent TypeError and vanishing buttons
         qr_buffer = create_static_qr(exact_qr_string)
-        
+        st.session_state['qr_data'] = qr_buffer.getvalue()  # Extracts raw bytes safely
+        st.session_state['qr_filename'] = f"{safe_event_prefix}_Desk_Code_{available_tags[selected_label]}.png"
+        st.session_state['qr_label'] = selected_label
+        st.session_state['qr_event'] = event_name
+
+    # Display UI safely from session state OUTSIDE the button
+    if 'qr_data' in st.session_state:
+        st.divider()
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            st.image(qr_buffer, caption=f"{event_name} - {selected_label}", use_column_width=True)
+            st.image(st.session_state['qr_data'], caption=f"{st.session_state['qr_event']} - {st.session_state['qr_label']}", use_container_width=True)
             
         with col2:
             st.markdown(
                 """
                 **Instructions for the Gate:**
-                1. Download this image.
-                2. Print copies for your gate staff.
+                1. Download this image using the button below.
+                2. Print copies on standard A4 paper for your gate staff.
                 3. Bouncers will scan this exact code to deduct from the allocated stock.
                 """
             )
             
             st.download_button(
-                label=f"📥 Download Print-Ready {selected_label} QR",
-                data=qr_buffer,
-                file_name=f"{safe_event_prefix}_Desk_Code_{available_tags[selected_label]}.png",
+                label="📥 Download Print-Ready QR Code",
+                data=st.session_state['qr_data'],
+                file_name=st.session_state['qr_filename'],
                 mime="image/png",
                 type="primary"
             )
