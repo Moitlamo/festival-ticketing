@@ -16,17 +16,29 @@ st.write("Real-time tracking of digital ticket sales and physical gate inventory
 # 2. Event Selection
 try:
     if 'supabase' in locals():
-        events_res = supabase.table("events").select("name").execute()
-        event_options = [e["name"] for e in events_res.data] if events_res.data else []
+        # Fetch both the name and the id so we can use the id for filtering tickets
+        events_res = supabase.table("events").select("id, name").execute()
+        
+        if events_res.data:
+            # Create a dictionary mapping event names to their IDs
+            event_dict = {e["name"]: e["id"] for e in events_res.data}
+            event_options = list(event_dict.keys())
+        else:
+            event_dict = {}
+            event_options = []
     else:
+        event_dict = {}
         event_options = []
 except Exception:
+    event_dict = {}
     event_options = []
 
 if not event_options:
     event_options = ["Leririma Games", "Mahalapye East Finals", "Taupye Soccer Tournament"]
+    event_dict = {name: None for name in event_options}
 
 event_name = st.selectbox("Select Event to View", event_options)
+selected_event_id = event_dict.get(event_name)
 
 st.divider()
 
@@ -37,11 +49,15 @@ if event_name:
     st.markdown("<h3 style='color: #1E3A8A;'>Digital Ticket Sales</h3>", unsafe_allow_html=True)
     
     try:
-        tickets_res = supabase.table("tickets").select("*").eq("event_name", event_name).execute()
-        digital_data = tickets_res.data
+        if selected_event_id is not None:
+            # Use event_id to filter the tickets table based on your schema
+            tickets_res = supabase.table("tickets").select("*").eq("event_id", selected_event_id).execute()
+            digital_data = tickets_res.data
+        else:
+            digital_data = []
     except Exception as e:
         digital_data = []
-        st.warning(f"Could not load digital tickets. Ensure 'tickets' table exists. ({e})")
+        st.warning(f"Could not load digital tickets. ({e})")
 
     if digital_data:
         df_digital = pd.DataFrame(digital_data)
@@ -66,6 +82,7 @@ if event_name:
     st.markdown("<h3 style='color: #1E3A8A;'>Physical Gate Tags (Inventory Tracker)</h3>", unsafe_allow_html=True)
     
     try:
+        # Inventory table uses event_name, so we filter by event_name here
         inventory_res = supabase.table("inventory").select("*").eq("event_name", event_name).execute()
         inventory_data = inventory_res.data
     except Exception as e:
