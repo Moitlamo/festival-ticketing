@@ -37,8 +37,6 @@ if event_name:
     st.markdown("<h3 style='color: #1E3A8A;'>Digital Ticket Sales</h3>", unsafe_allow_html=True)
     
     try:
-        # Assuming your digital tickets are stored in a table named 'tickets'
-        # Adjust the table name if your digital tickets are stored elsewhere
         tickets_res = supabase.table("tickets").select("*").eq("event_name", event_name).execute()
         digital_data = tickets_res.data
     except Exception as e:
@@ -48,7 +46,6 @@ if event_name:
     if digital_data:
         df_digital = pd.DataFrame(digital_data)
         
-        # Calculate digital totals (Assuming 'price' and 'status' columns exist)
         total_digital_sold = len(df_digital)
         total_digital_revenue = df_digital["price"].sum() if "price" in df_digital.columns else 0.0
         
@@ -78,12 +75,10 @@ if event_name:
     if inventory_data:
         df_inv = pd.DataFrame(inventory_data)
         
-        # Clean up tag names (e.g., LERIRIMAGAMES_DEPLETION_VIP_TAG -> VIP TAG)
         df_inv["Display Name"] = df_inv["tag_type"].apply(
             lambda x: x.split('_')[-2] + " " + x.split('_')[-1] if '_' in x else x
         )
         
-        # Calculate monetary value
         df_inv["Unsold Value (BWP)"] = df_inv["price"] * df_inv["stock_count"]
         
         total_remaining_tags = df_inv["stock_count"].sum()
@@ -93,7 +88,6 @@ if event_name:
         col3.metric("Physical Tags Remaining at Gate", int(total_remaining_tags))
         col4.metric("Value of Remaining Stock (BWP)", f"P{total_unsold_value:,.2f}")
 
-        # Display Detailed Breakdown
         st.dataframe(
             df_inv[["Display Name", "price", "stock_count", "Unsold Value (BWP)"]].rename(
                 columns={
@@ -115,7 +109,6 @@ if event_name:
     if digital_data or inventory_data:
         st.markdown("<h3 style='color: #8B0000;'>Event Grand Totals</h3>", unsafe_allow_html=True)
         
-        # Safely calculate grand totals
         calc_digital_rev = df_digital["price"].sum() if digital_data and "price" in df_digital.columns else 0.0
         calc_unsold_phys = total_unsold_value if inventory_data else 0.0
         
