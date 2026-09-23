@@ -12,7 +12,7 @@ supabase: Client = init_connection()
 
 st.title("Issue Vendor Allocation")
 
-# 1. Fetch Events (Using select('*') to prevent column errors, caching removed for debugging)
+# 1. Fetch Events
 def fetch_events():
     try:
         response = supabase.table('events').select('*').execute()
@@ -21,14 +21,13 @@ def fetch_events():
         st.error(f"Events fetch error: {e}")
         return []
 
-# 2. Fetch Vendors (Using select('*') to prevent column errors)
+# 2. Fetch Vendors
 def fetch_vendors():
     try:
         response = supabase.table('vendors').select('*').execute()
         vendor_names = []
         if response.data:
             for v in response.data:
-                # Intelligently look for the name under common column titles
                 name = v.get('name') or v.get('vendor_name') or v.get('full_name')
                 if name:
                     vendor_names.append(name)
@@ -38,32 +37,22 @@ def fetch_vendors():
         return []
 
 events_data = fetch_events()
-# Intelligently look for event name
 event_names = [e.get('name') or e.get('event_name') or e.get('title') for e in events_data if e]
 vendor_list = fetch_vendors()
 
 selected_event_name = st.selectbox("Target Event", options=event_names if event_names else ["No events found"])
 selected_vendor = st.selectbox("Select Vendor", options=vendor_list if vendor_list else ["No vendors found"])
 
-# Match selected event name to its numeric ID
-selected_event_id = None
-if selected_event_name and selected_event_name != "No events found":
-    for e in events_data:
-        name = e.get('name') or e.get('event_name') or e.get('title')
-        if name == selected_event_name:
-            selected_event_id = e.get('id')
-            break
-
-# 3. Fetch Ticket Types dynamically (Using select('*'))
-def fetch_tickets(event_id):
-    if not event_id:
-        return {}
+# 3. Fetch Ticket Types dynamically (FOOLPROOF: No event_id filter)
+# This will find ALL unique tickets across your entire database
+def fetch_tickets():
     try:
-        response = supabase.table('tickets').select('*').eq('event_id', event_id).execute()
+        response = supabase.table('tickets').select('*').execute()
         unique_tickets = {}
         if response.data:
             for row in response.data:
-                t_type = row.get('ticket_type')
+                # Intelligently look for the ticket name
+                t_type = row.get('ticket_type') or row.get('name') or row.get('tag_type')
                 if t_type and t_type not in unique_tickets:
                     unique_tickets[t_type] = row.get('price', 0.0)
         return unique_tickets
@@ -71,7 +60,7 @@ def fetch_tickets(event_id):
         st.error(f"Database Error: {e}")
         return {}
 
-tickets_dict = fetch_tickets(selected_event_id)
+tickets_dict = fetch_tickets()
 ticket_options = list(tickets_dict.keys())
 
 # Dropdown for Ticket Type
