@@ -12,50 +12,54 @@ supabase: Client = init_connection()
 
 st.title("Issue Vendor Allocation")
 
-# 1. Fetch Events (Fetching both 'id' and 'name' to link with the tickets table)
-@st.cache_data(ttl=10)
+# 1. Fetch Events (Using select('*') to prevent column errors, caching removed for debugging)
 def fetch_events():
     try:
-        response = supabase.table('events').select('id, name').execute()
+        response = supabase.table('events').select('*').execute()
         return response.data if response.data else []
     except Exception as e:
         st.error(f"Events fetch error: {e}")
         return []
 
-# 2. Fetch Vendors
-@st.cache_data(ttl=10)
+# 2. Fetch Vendors (Using select('*') to prevent column errors)
 def fetch_vendors():
     try:
-        response = supabase.table('vendors').select('name').execute()
-        return [vendor['name'] for vendor in response.data] if response.data else []
+        response = supabase.table('vendors').select('*').execute()
+        vendor_names = []
+        if response.data:
+            for v in response.data:
+                # Intelligently look for the name under common column titles
+                name = v.get('name') or v.get('vendor_name') or v.get('full_name')
+                if name:
+                    vendor_names.append(name)
+        return vendor_names
     except Exception as e:
         st.error(f"Vendors fetch error: {e}")
         return []
 
 events_data = fetch_events()
-event_names = [e['name'] for e in events_data if 'name' in e]
+# Intelligently look for event name
+event_names = [e.get('name') or e.get('event_name') or e.get('title') for e in events_data if e]
 vendor_list = fetch_vendors()
 
-selected_event_name = st.selectbox("Target Event", options=event_names)
-selected_vendor = st.selectbox("Select Vendor", options=vendor_list)
+selected_event_name = st.selectbox("Target Event", options=event_names if event_names else ["No events found"])
+selected_vendor = st.selectbox("Select Vendor", options=vendor_list if vendor_list else ["No vendors found"])
 
 # Match selected event name to its numeric ID
 selected_event_id = None
-for e in events_data:
-    if e.get('name') == selected_event_name:
-        selected_event_id = e.get('id')
-        break
+if selected_event_name and selected_event_name != "No events found":
+    for e in events_data:
+        name = e.get('name') or e.get('event_name') or e.get('title')
+        if name == selected_event_name:
+            selected_event_id = e.get('id')
+            break
 
-# 3. Fetch Ticket Types dynamically using the exact column names from your database
-@st.cache_data(ttl=10)
+# 3. Fetch Ticket Types dynamically (Using select('*'))
 def fetch_tickets(event_id):
     if not event_id:
         return {}
     try:
-        # Querying the tickets table using 'ticket_type', 'price', and 'event_id'
-        response = supabase.table('tickets').select('ticket_type, price').eq('event_id', event_id).execute()
-        
-        # The tickets table contains individual tickets, so we deduplicate them to get unique categories
+        response = supabase.table('tickets').select('*').eq('event_id', event_id).execute()
         unique_tickets = {}
         if response.data:
             for row in response.data:
@@ -71,10 +75,10 @@ tickets_dict = fetch_tickets(selected_event_id)
 ticket_options = list(tickets_dict.keys())
 
 # Dropdown for Ticket Type
-selected_ticket = st.selectbox("Select Ticket Type / Tag String", options=ticket_options)
+selected_ticket = st.selectbox("Select Ticket Type / Tag String", options=ticket_options if ticket_options else ["No tickets found"])
 
 # 4. Auto-populate Price logic
-auto_price = float(tickets_dict.get(selected_ticket, 0.00)) if selected_ticket else 0.00
+auto_price = float(tickets_dict.get(selected_ticket, 0.00)) if selected_ticket and selected_ticket != "No tickets found" else 0.00
 
 # 5. Form Submission
 with st.form("allocation_form"):
@@ -82,18 +86,19 @@ with st.form("allocation_form"):
     with col1:
         initial_stock = st.number_input("Quantity Given", min_value=1, step=1)
     with col2:
-        # The value is now dynamically driven by the auto_price variable
         price = st.number_input("Price (Pula)", value=auto_price, min_value=0.00, step=10.00, format="%.2f")
         
     submitted = st.form_submit_button("Issue to Vendor", type="primary")
 
     if submitted:
-        if not selected_event_name or not selected_vendor or not selected_ticket:
-            st.error("⚠️ Please select Event, Vendor, and Ticket Type.")
+        if not selected_event_name or selected_event_name == "No events found" or \
+           not selected_vendor or selected_vendor == "No vendors found" or \
+           not selected_ticket or selected_ticket == "No tickets found":
+            st.error("⚠️ Please select a valid Event, Vendor, and Ticket Type.")
         else:
             clean_tag = selected_ticket.strip()
             
-            # Check for existing allocation in inventory table
+            # Check for existing allocation
             existing_response = supabase.table('inventory') \
                 .select('*') \
                 .eq('event_name', selected_event_name) \
