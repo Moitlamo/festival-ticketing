@@ -43,36 +43,36 @@ vendor_list = fetch_vendors()
 selected_event_name = st.selectbox("Target Event", options=event_names if event_names else ["No events found"])
 selected_vendor = st.selectbox("Select Vendor", options=vendor_list if vendor_list else ["No vendors found"])
 
-# Match selected event name to its numeric ID
-selected_event_id = None
-if selected_event_name and selected_event_name != "No events found":
-    for e in events_data:
-        name = e.get('name') or e.get('event_name') or e.get('title')
-        if name == selected_event_name:
-            selected_event_id = e.get('id')
-            break
-
-# 3. Fetch Ticket Types strictly for the chosen event
-def fetch_tickets(event_id):
-    if not event_id:
-        return {}
+# 3. Fetch ALL Ticket Types using Pagination (Only requesting columns that exist)
+def fetch_all_ticket_types():
+    unique_tickets = {}
     try:
-        # The .eq('event_id', event_id) prevents the 1000-row limit issue by only fetching tickets for the selected event
-        response = supabase.table('tickets').select('*').eq('event_id', event_id).execute()
-        unique_tickets = {}
-        if response.data:
-            for row in response.data:
-                # Find the ticket type name in the database
-                t_type = row.get('ticket_type') or row.get('name') or row.get('tag_type')
+        limit = 1000
+        offset = 0
+        # Loop through the entire table in chunks to find every single ticket category
+        while True:
+            # FIXED: Removed 'name' and 'tag_type' to prevent database rejection
+            response = supabase.table('tickets').select('ticket_type, price').range(offset, offset + limit - 1).execute()
+            data = response.data
+            
+            if not data:
+                break
+                
+            for row in data:
+                t_type = row.get('ticket_type')
                 if t_type and t_type not in unique_tickets:
                     unique_tickets[t_type] = row.get('price', 0.0)
+                    
+            if len(data) < limit:
+                break
+            offset += limit
+            
         return unique_tickets
     except Exception as e:
         st.error(f"Database Error: {e}")
         return {}
 
-# Call the function passing the ID of the selected event
-tickets_dict = fetch_tickets(selected_event_id)
+tickets_dict = fetch_all_ticket_types()
 ticket_options = list(tickets_dict.keys())
 
 # Dropdown for Ticket Type
