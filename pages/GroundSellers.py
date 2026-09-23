@@ -43,15 +43,26 @@ vendor_list = fetch_vendors()
 selected_event_name = st.selectbox("Target Event", options=event_names if event_names else ["No events found"])
 selected_vendor = st.selectbox("Select Vendor", options=vendor_list if vendor_list else ["No vendors found"])
 
-# 3. Fetch Ticket Types dynamically (FOOLPROOF: No event_id filter)
-# This will find ALL unique tickets across your entire database
-def fetch_tickets():
+# Match selected event name to its numeric ID
+selected_event_id = None
+if selected_event_name and selected_event_name != "No events found":
+    for e in events_data:
+        name = e.get('name') or e.get('event_name') or e.get('title')
+        if name == selected_event_name:
+            selected_event_id = e.get('id')
+            break
+
+# 3. Fetch Ticket Types strictly for the chosen event
+def fetch_tickets(event_id):
+    if not event_id:
+        return {}
     try:
-        response = supabase.table('tickets').select('*').execute()
+        # The .eq('event_id', event_id) prevents the 1000-row limit issue by only fetching tickets for the selected event
+        response = supabase.table('tickets').select('*').eq('event_id', event_id).execute()
         unique_tickets = {}
         if response.data:
             for row in response.data:
-                # Intelligently look for the ticket name
+                # Find the ticket type name in the database
                 t_type = row.get('ticket_type') or row.get('name') or row.get('tag_type')
                 if t_type and t_type not in unique_tickets:
                     unique_tickets[t_type] = row.get('price', 0.0)
@@ -60,7 +71,8 @@ def fetch_tickets():
         st.error(f"Database Error: {e}")
         return {}
 
-tickets_dict = fetch_tickets()
+# Call the function passing the ID of the selected event
+tickets_dict = fetch_tickets(selected_event_id)
 ticket_options = list(tickets_dict.keys())
 
 # Dropdown for Ticket Type
