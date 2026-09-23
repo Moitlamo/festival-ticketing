@@ -28,7 +28,7 @@ inventory_data = fetch_inventory()
 if not inventory_data:
     st.info("No vendor allocations found. Issue tickets to vendors first to see tracking data.")
 else:
-    # Convert database response to a Pandas DataFrame for easy math and filtering
+    # Convert database response to a Pandas DataFrame
     df = pd.DataFrame(inventory_data)
     
     # Calculate tracking metrics
@@ -36,7 +36,7 @@ else:
     df['Cash Due (Pula)'] = df['Sold Qty'] * df['price']
     df['Total Stock Value (Pula)'] = df['initial_stock'] * df['price']
     
-    # Rename columns for a clean, professional display
+    # Rename columns for display
     display_df = df.rename(columns={
         'event_name': 'Event',
         'vendor_name': 'Seller Name',
@@ -57,58 +57,79 @@ else:
     else:
         filtered_df = display_df
 
-    # 3. Top Level Financial & Inventory Metrics
-    st.markdown("### 📈 Overall Performance")
-    col1, col2, col3, col4 = st.columns(4)
+    # --- SPLIT THE DATA: MASTER VAULT vs GROUND SELLERS ---
+    master_df = filtered_df[filtered_df['Seller Name'].str.strip().str.lower() == 'main gate']
+    sellers_df = filtered_df[filtered_df['Seller Name'].str.strip().str.lower() != 'main gate']
+
+    # 3. Master Vault (Main Gate) Section
+    st.divider()
+    st.markdown("## 🏦 Master Vault (Main Gate Inventory)")
     
-    total_issued = int(filtered_df['Issued Qty'].sum())
-    total_sold = int(filtered_df['Sold Qty'].sum())
-    total_remaining = int(filtered_df['Remaining Qty'].sum())
-    total_cash_due = float(filtered_df['Cash Due (Pula)'].sum())
-    
-    col1.metric("Total Tickets Issued", f"{total_issued}")
-    col2.metric("Total Tickets Sold", f"{total_sold}")
-    col3.metric("Tickets Remaining", f"{total_remaining}")
-    col4.metric("Total Cash Due", f"P {total_cash_due:,.2f}")
+    if not master_df.empty:
+        col1, col2 = st.columns(2)
+        total_vault_stock = int(master_df['Remaining Qty'].sum())
+        total_vault_value = float(master_df['Remaining Qty'].sum() * master_df['Price (Pula)'].mean()) # Approximated value
+        
+        col1.metric("Bulk Tickets Remaining in Vault", f"{total_vault_stock}")
+        
+        master_display = master_df[['Ticket Type', 'Event', 'Price (Pula)', 'Remaining Qty']]
+        st.dataframe(
+            master_display.style.format({"Price (Pula)": "{:.2f}"}),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No 'Main Gate' inventory found for this event.")
 
     st.divider()
 
-    # 4. Detailed Seller Breakdown
-    st.markdown("### 🧑‍💼 Seller Breakdown")
+    # 4. Ground Sellers Section
+    st.markdown("## 🧑‍💼 Active Ground Sellers")
     
-    # Rearrange columns so the most important financial data is at the front
-    final_table = filtered_df[[
-        'Seller Name', 'Ticket Type', 'Event', 'Price (Pula)', 
-        'Issued Qty', 'Sold Qty', 'Remaining Qty', 'Cash Due (Pula)'
-    ]]
-    
-    # Sort by Cash Due so the sellers owing the most money are at the top
-    final_table = final_table.sort_values(by=['Seller Name', 'Ticket Type'])
-    
-    # Display the interactive dataframe
-    st.dataframe(
-        final_table.style.format({
-            "Price (Pula)": "{:.2f}",
-            "Cash Due (Pula)": "{:.2f}"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    # 5. Quick Summary by Vendor (Aggregated)
-    st.markdown("### 💰 Consolidated Vendor Liabilities")
-    # Group by Seller to see total cash owed regardless of ticket type
-    vendor_summary = filtered_df.groupby('Seller Name').agg(
-        Total_Tickets_Sold=('Sold Qty', 'sum'),
-        Total_Cash_Due=('Cash Due (Pula)', 'sum')
-    ).reset_index()
-    
-    vendor_summary = vendor_summary.sort_values(by='Total_Cash_Due', ascending=False)
-    
-    st.dataframe(
-        vendor_summary.style.format({
-            "Total_Cash_Due": "P {:.2f}"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
+    if not sellers_df.empty:
+        # Top Level Financial & Inventory Metrics for SELLERS ONLY
+        st.markdown("### 📈 Ground Seller Performance")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        total_issued = int(sellers_df['Issued Qty'].sum())
+        total_sold = int(sellers_df['Sold Qty'].sum())
+        total_remaining = int(sellers_df['Remaining Qty'].sum())
+        total_cash_due = float(sellers_df['Cash Due (Pula)'].sum())
+        
+        col1.metric("Total Tickets Issued", f"{total_issued}")
+        col2.metric("Total Tickets Sold", f"{total_sold}")
+        col3.metric("Tickets Held by Sellers", f"{total_remaining}")
+        col4.metric("Total Cash Due", f"P {total_cash_due:,.2f}")
+
+        # Detailed Seller Breakdown
+        st.markdown("### 📋 Seller Breakdown")
+        final_table = sellers_df[[
+            'Seller Name', 'Ticket Type', 'Event', 'Price (Pula)', 
+            'Issued Qty', 'Sold Qty', 'Remaining Qty', 'Cash Due (Pula)'
+        ]].sort_values(by=['Seller Name', 'Ticket Type'])
+        
+        st.dataframe(
+            final_table.style.format({
+                "Price (Pula)": "{:.2f}",
+                "Cash Due (Pula)": "{:.2f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Consolidated Vendor Liabilities
+        st.markdown("### 💰 Consolidated Cash Owed (By Seller)")
+        vendor_summary = sellers_df.groupby('Seller Name').agg(
+            Total_Tickets_Sold=('Sold Qty', 'sum'),
+            Total_Cash_Due=('Cash Due (Pula)', 'sum')
+        ).reset_index().sort_values(by='Total_Cash_Due', ascending=False)
+        
+        st.dataframe(
+            vendor_summary.style.format({
+                "Total_Cash_Due": "P {:.2f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No ground sellers have been issued tickets yet.")
