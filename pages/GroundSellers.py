@@ -165,13 +165,31 @@ with st.form("allocation_form"):
                             'initial_stock': new_initial, 'stock_count': new_stock, 'price': price
                         }).eq('event_name', selected_event_name).eq('vendor_name', selected_vendor).eq('tag_type', clean_tag).execute()
                           
-                        st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {req_stock} physical '{clean_tag}' tags from Main Gate to {selected_vendor}. New Total: {new_initial}")
                     else:
                         supabase.table('inventory').insert({
                             'event_name': selected_event_name, 'vendor_name': selected_vendor, 'tag_type': clean_tag,
                             'initial_stock': req_stock, 'stock_count': req_stock, 'price': price
                         }).execute()
+
+                    # 3. DEDUCT from the Master Vault's Inventory Summary
+                    vault_inv_response = supabase.table('inventory') \
+                        .select('*') \
+                        .eq('event_name', selected_event_name) \
+                        .ilike('vendor_name', 'Main Gate') \
+                        .eq('tag_type', clean_tag) \
+                        .execute()
                         
-                        st.success(f"✅ NEW VAULT TRANSFER: Moved {req_stock} physical '{clean_tag}' tags from Main Gate to {selected_vendor}.")
+                    if vault_inv_response.data and len(vault_inv_response.data) > 0:
+                        vault_row = vault_inv_response.data[0]
+                        # Subtract the allocated amount so the dashboard updates
+                        new_vault_stock = max(0, vault_row.get('stock_count', 0) - req_stock)
+                        new_vault_initial = max(0, vault_row.get('initial_stock', 0) - req_stock)
+                        
+                        supabase.table('inventory').update({
+                            'initial_stock': new_vault_initial,
+                            'stock_count': new_vault_stock
+                        }).eq('id', vault_row['id']).execute()
+                        
+                    st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {req_stock} physical '{clean_tag}' tags from Main Gate to {selected_vendor}. Vault inventory updated.")
             except Exception as e:
                 st.error(f"❌ Transaction Error: {str(e)}")
