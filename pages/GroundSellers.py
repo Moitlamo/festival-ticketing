@@ -105,29 +105,47 @@ with st.form("allocation_form"):
             st.error("⚠️ Please select a valid Event, Vendor, and Ticket Type.")
         else:
             clean_tag = selected_ticket.strip()
+            req_stock = int(initial_stock)
             
-            # --- FOOLPROOF VAULT CHECK ---
+            # --- PAGINATED DEEP SCAN VAULT CHECK ---
             try:
-                # Removed the strict event_id filter so it finds your generated tags regardless of ID mismatch
-                available_response = supabase.table('tickets') \
-                    .select('id, vendor_name') \
-                    .eq('ticket_type', clean_tag) \
-                    .execute()
-                
-                # Filter for tickets that are sitting in the Vault (Main Gate, blank, or unassigned)
                 available_tickets = []
-                if available_response.data:
-                    for t in available_response.data:
-                        v_name = str(t.get('vendor_name') or '').strip().lower()
-                        # Account for various ways the generator might leave a ticket unassigned
-                        if v_name in ['', 'none', 'null', 'main gate', 'admin']:
-                            available_tickets.append(t['id'])
+                offset = 0
+                fetch_limit = 1000
                 
-                if len(available_tickets) < initial_stock:
-                    st.error(f"⚠️ Vault Shortage: You requested {initial_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available.")
+                with st.spinner(f"Deep scanning vault for {req_stock} available '{clean_tag}' tags..."):
+                    while True:
+                        available_response = supabase.table('tickets') \
+                            .select('id, vendor_name') \
+                            .eq('ticket_type', clean_tag) \
+                            .range(offset, offset + fetch_limit - 1) \
+                            .execute()
+                        
+                        data = available_response.data
+                        if not data:
+                            break
+                            
+                        # Extract unassigned tickets from this chunk
+                        for t in data:
+                            v_name = str(t.get('vendor_name') or '').strip().lower()
+                            if v_name in ['', 'none', 'null', 'main gate', 'admin']:
+                                available_tickets.append(t['id'])
+                                
+                            # Stop instantly if we found enough to fulfill the order
+                            if len(available_tickets) >= req_stock:
+                                break
+                        
+                        # Break the loop if we found enough OR if we reached the end of the database
+                        if len(available_tickets) >= req_stock or len(data) < fetch_limit:
+                            break
+                            
+                        offset += fetch_limit
+                
+                if len(available_tickets) < req_stock:
+                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available in the database.")
                 else:
                     # 1. Claim the physical tickets by transferring their ownership
-                    tickets_to_assign = available_tickets[:int(initial_stock)]
+                    tickets_to_assign = available_tickets[:req_stock]
                     
                     supabase.table('tickets') \
                         .update({'vendor_name': selected_vendor, 'status': 'With_Vendor'}) \
@@ -145,8 +163,8 @@ with st.form("allocation_form"):
                     if existing_response.data and len(existing_response.data) > 0:
                         # Refill existing dashboard summary
                         existing_row = existing_response.data[0]
-                        new_initial = existing_row.get('initial_stock', 0) + initial_stock
-                        new_stock = existing_row.get('stock_count', 0) + initial_stock
+                        new_initial = existing_row.get('initial_stock', 0) + req_stock
+                        new_stock = existing_row.get('stock_count', 0) + req_stock
                         
                         supabase.table('inventory').update({
                             'initial_stock': new_initial,
@@ -156,18 +174,18 @@ with st.form("allocation_form"):
                           .eq('vendor_name', selected_vendor) \
                           .eq('tag_type', clean_tag).execute()
                           
-                        st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {initial_stock} physical '{clean_tag}' tags to {selected_vendor}. New Total: {new_initial}")
+                        st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {req_stock} physical '{clean_tag}' tags to {selected_vendor}. New Total: {new_initial}")
                     else:
                         # Create new dashboard summary
                         supabase.table('inventory').insert({
                             'event_name': selected_event_name,
                             'vendor_name': selected_vendor,
                             'tag_type': clean_tag,
-                            'initial_stock': initial_stock,
-                            'stock_count': initial_stock,
+                            'initial_stock': req_stock,
+                            'stock_count': req_stock,
                             'price': price
                         }).execute()
                         
-                        st.success(f"✅ NEW VAULT TRANSFER: Moved {initial_stock} physical '{clean_tag}' tags to {selected_vendor}.")
+                        st.success(f"✅ NEW VAULT TRANSFER: Moved {req_stock} physical '{clean_tag}' tags to {selected_vendor}.")
             except Exception as e:
                 st.error(f"❌ Transaction Error: {str(e)}")
