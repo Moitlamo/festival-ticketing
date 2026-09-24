@@ -14,7 +14,6 @@ supabase: Client = init_connection()
 st.title("Issue Vendor Allocation")
 
 # --- MASTER VAULT CONFIGURATION ---
-# We explicitly define Vendor ID 4 (Main Gate) as the master vault
 VAULT_VENDOR_ID = 4  
 
 # 1. Fetch Events
@@ -61,14 +60,17 @@ if selected_event_name and selected_event_name != "No events found":
             
 selected_vendor_id = vendor_mapping.get(selected_vendor)
 
-# 3. Fetch ALL Ticket Types
-def fetch_all_ticket_types():
+# 3. Fetch ONLY Ticket Types belonging to the Selected Event
+def fetch_event_ticket_types(event_id):
+    if not event_id:
+        return {}
     unique_tickets = {}
     try:
         limit = 1000
         offset = 0
         while True:
-            response = supabase.table('tickets').select('ticket_type, price').range(offset, offset + limit - 1).execute()
+            # STRICT FILTER: Only pull tickets for this exact event ID
+            response = supabase.table('tickets').select('ticket_type, price').eq('event_id', event_id).range(offset, offset + limit - 1).execute()
             data = response.data
             
             if not data:
@@ -88,14 +90,14 @@ def fetch_all_ticket_types():
         st.error(f"Database Error: {e}")
         return {}
 
-tickets_dict = fetch_all_ticket_types()
+tickets_dict = fetch_event_ticket_types(selected_event_id)
 ticket_options = list(tickets_dict.keys())
 
-# Dropdown for Ticket Type
-selected_ticket = st.selectbox("Select Ticket Type / Tag String", options=ticket_options if ticket_options else ["No tickets found"])
+# Dropdown for Ticket Type (Now strictly tied to the event)
+selected_ticket = st.selectbox("Select Ticket Type / Tag String", options=ticket_options if ticket_options else ["No tickets found for this event"])
 
 # 4. Auto-populate Price logic
-auto_price = float(tickets_dict.get(selected_ticket, 0.00)) if selected_ticket and selected_ticket != "No tickets found" else 0.00
+auto_price = float(tickets_dict.get(selected_ticket, 0.00)) if selected_ticket and selected_ticket != "No tickets found for this event" else 0.00
 
 # 5. Form Submission
 with st.form("allocation_form"):
@@ -108,7 +110,7 @@ with st.form("allocation_form"):
     submitted = st.form_submit_button("Issue to Vendor", type="primary")
 
     if submitted:
-        if not selected_event_name or not selected_vendor or not selected_ticket:
+        if not selected_event_name or not selected_vendor or not selected_ticket or selected_ticket == "No tickets found for this event":
             st.error("⚠️ Please select a valid Event, Vendor, and Ticket Type.")
         else:
             clean_tag = selected_ticket.strip()
@@ -117,28 +119,40 @@ with st.form("allocation_form"):
             try:
                 available_tickets = []
                 
-                # --- EXPLICIT VAULT SEARCH ---
+                # --- EXPLICIT VAULT SEARCH (STRICT EVENT FILTER ADDED) ---
                 
-                # 1. Search for tickets locked in the Master Vault (Main Gate / ID 4)
-                mg_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', VAULT_VENDOR_ID).limit(req_stock).execute()
+                # 1. Search for tickets locked in the Master Vault (Main Gate / ID 4) for THIS event
+                mg_response = supabase.table('tickets').select('id') \
+                    .eq('ticket_type', clean_tag) \
+                    .eq('vendor_id', VAULT_VENDOR_ID) \
+                    .eq('event_id', selected_event_id) \
+                    .limit(req_stock).execute()
                 if mg_response.data:
                     available_tickets.extend([t['id'] for t in mg_response.data])
 
-                # 2. If we need more, search for strictly unassigned (NULL) tickets
+                # 2. If we need more, search for strictly unassigned (NULL) tickets for THIS event
                 if len(available_tickets) < req_stock:
-                    null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_id', 'null').limit(req_stock - len(available_tickets)).execute()
+                    null_response = supabase.table('tickets').select('id') \
+                        .eq('ticket_type', clean_tag) \
+                        .is_('vendor_id', 'null') \
+                        .eq('event_id', selected_event_id) \
+                        .limit(req_stock - len(available_tickets)).execute()
                     if null_response.data:
                         available_tickets.extend([t['id'] for t in null_response.data])
                         
-                # 3. If we STILL need more, search for vendor_id = 0
+                # 3. If we STILL need more, search for vendor_id = 0 for THIS event
                 if len(available_tickets) < req_stock:
-                    zero_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', 0).limit(req_stock - len(available_tickets)).execute()
+                    zero_response = supabase.table('tickets').select('id') \
+                        .eq('ticket_type', clean_tag) \
+                        .eq('vendor_id', 0) \
+                        .eq('event_id', selected_event_id) \
+                        .limit(req_stock - len(available_tickets)).execute()
                     if zero_response.data:
                         available_tickets.extend([t['id'] for t in zero_response.data])
 
                 # --- EVALUATE THE RESULTS ---
                 if len(available_tickets) < req_stock:
-                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} '{clean_tag}' tags are available in the vault.")
+                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} '{clean_tag}' tags are available in the vault for {selected_event_name}.")
                 else:
                     # 1. Reassign the physical tickets from the Vault to the Ground Seller
                     tickets_to_assign = available_tickets[:req_stock]
@@ -181,7 +195,6 @@ with st.form("allocation_form"):
                         
                     if vault_inv_response.data and len(vault_inv_response.data) > 0:
                         vault_row = vault_inv_response.data[0]
-                        # Subtract the allocated amount so the dashboard updates
                         new_vault_stock = max(0, vault_row.get('stock_count', 0) - req_stock)
                         new_vault_initial = max(0, vault_row.get('initial_stock', 0) - req_stock)
                         
