@@ -52,28 +52,17 @@ if selected_event_name and selected_event_name != "No events found":
             selected_event_id = e.get('id')
             break
 
-# 3. Fetch ALL Ticket Types using Pagination
+# 3. Fetch ALL Ticket Types (using direct DB query for speed)
 def fetch_all_ticket_types():
     unique_tickets = {}
     try:
-        limit = 1000
-        offset = 0
-        while True:
-            response = supabase.table('tickets').select('ticket_type, price').range(offset, offset + limit - 1).execute()
-            data = response.data
-            
-            if not data:
-                break
-                
-            for row in data:
+        # Get a list of all unique ticket categories by scanning directly in Supabase
+        response = supabase.table('tickets').select('ticket_type, price').execute()
+        if response.data:
+            for row in response.data:
                 t_type = row.get('ticket_type')
                 if t_type and t_type not in unique_tickets:
                     unique_tickets[t_type] = row.get('price', 0.0)
-                    
-            if len(data) < limit:
-                break
-            offset += limit
-            
         return unique_tickets
     except Exception as e:
         st.error(f"Database Error: {e}")
@@ -99,52 +88,39 @@ with st.form("allocation_form"):
     submitted = st.form_submit_button("Issue to Vendor", type="primary")
 
     if submitted:
-        if not selected_event_name or selected_event_name == "No events found" or \
-           not selected_vendor or selected_vendor == "No vendors found" or \
-           not selected_ticket or selected_ticket == "No tickets found":
+        if not selected_event_name or not selected_vendor or not selected_ticket:
             st.error("⚠️ Please select a valid Event, Vendor, and Ticket Type.")
         else:
             clean_tag = selected_ticket.strip()
             req_stock = int(initial_stock)
             
-            # --- PAGINATED DEEP SCAN VAULT CHECK ---
             try:
                 available_tickets = []
-                offset = 0
-                fetch_limit = 1000
                 
-                with st.spinner(f"Deep scanning vault for {req_stock} available '{clean_tag}' tags..."):
-                    while True:
-                        available_response = supabase.table('tickets') \
-                            .select('id, vendor_name') \
-                            .eq('ticket_type', clean_tag) \
-                            .range(offset, offset + fetch_limit - 1) \
-                            .execute()
-                        
-                        data = available_response.data
-                        if not data:
-                            break
-                            
-                        # Extract unassigned tickets from this chunk
-                        for t in data:
-                            v_name = str(t.get('vendor_name') or '').strip().lower()
-                            if v_name in ['', 'none', 'null', 'main gate', 'admin']:
-                                available_tickets.append(t['id'])
-                                
-                            # Stop instantly if we found enough to fulfill the order
-                            if len(available_tickets) >= req_stock:
-                                break
-                        
-                        # Break the loop if we found enough OR if we reached the end of the database
-                        if len(available_tickets) >= req_stock or len(data) < fetch_limit:
-                            break
-                            
-                        offset += fetch_limit
+                # --- DB-LEVEL VAULT SEARCH ---
+                # 1. Search for tags where vendor_name is literally a Database NULL
+                null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_name', 'null').limit(req_stock).execute()
+                if null_response.data:
+                    available_tickets.extend([t['id'] for t in null_response.data])
                 
+                # 2. If we need more, search for tags where vendor_name is just an empty string ""
                 if len(available_tickets) < req_stock:
-                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available in the database.")
+                    empty_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_name', '').limit(req_stock - len(available_tickets)).execute()
+                    if empty_response.data:
+                        available_tickets.extend([t['id'] for t in empty_response.data])
+                
+                # 3. If we STILL need more, search for tags assigned to 'Main Gate'
+                if len(available_tickets) < req_stock:
+                    maingate_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).ilike('vendor_name', '%main gate%').limit(req_stock - len(available_tickets)).execute()
+                    if maingate_response.data:
+                        available_tickets.extend([t['id'] for t in maingate_response.data])
+
+                # --- EVALUATE THE RESULTS ---
+                if len(available_tickets) < req_stock:
+                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available.")
+                    st.info("💡 **Debug Tip:** Open your Supabase 'tickets' table and look at the 50 tags you just generated. Ensure their `vendor_name` column is empty, and their `ticket_type` is exactly 'Double'.")
                 else:
-                    # 1. Claim the physical tickets by transferring their ownership
+                    # 1. Claim the physical tickets
                     tickets_to_assign = available_tickets[:req_stock]
                     
                     supabase.table('tickets') \
@@ -152,7 +128,7 @@ with st.form("allocation_form"):
                         .in_('id', tickets_to_assign) \
                         .execute()
                     
-                    # 2. Update the Inventory Summary Table for the Dashboard
+                    # 2. Update the Inventory Summary
                     existing_response = supabase.table('inventory') \
                         .select('*') \
                         .eq('event_name', selected_event_name) \
@@ -161,29 +137,19 @@ with st.form("allocation_form"):
                         .execute()
                         
                     if existing_response.data and len(existing_response.data) > 0:
-                        # Refill existing dashboard summary
                         existing_row = existing_response.data[0]
                         new_initial = existing_row.get('initial_stock', 0) + req_stock
                         new_stock = existing_row.get('stock_count', 0) + req_stock
                         
                         supabase.table('inventory').update({
-                            'initial_stock': new_initial,
-                            'stock_count': new_stock,
-                            'price': price
-                        }).eq('event_name', selected_event_name) \
-                          .eq('vendor_name', selected_vendor) \
-                          .eq('tag_type', clean_tag).execute()
+                            'initial_stock': new_initial, 'stock_count': new_stock, 'price': price
+                        }).eq('event_name', selected_event_name).eq('vendor_name', selected_vendor).eq('tag_type', clean_tag).execute()
                           
                         st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {req_stock} physical '{clean_tag}' tags to {selected_vendor}. New Total: {new_initial}")
                     else:
-                        # Create new dashboard summary
                         supabase.table('inventory').insert({
-                            'event_name': selected_event_name,
-                            'vendor_name': selected_vendor,
-                            'tag_type': clean_tag,
-                            'initial_stock': req_stock,
-                            'stock_count': req_stock,
-                            'price': price
+                            'event_name': selected_event_name, 'vendor_name': selected_vendor, 'tag_type': clean_tag,
+                            'initial_stock': req_stock, 'stock_count': req_stock, 'price': price
                         }).execute()
                         
                         st.success(f"✅ NEW VAULT TRANSFER: Moved {req_stock} physical '{clean_tag}' tags to {selected_vendor}.")
