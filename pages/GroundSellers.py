@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 from supabase import create_client, Client
 
 # Initialize Supabase client
@@ -56,7 +57,14 @@ if selected_event_name and selected_event_name != "No events found":
             
 selected_vendor_id = vendor_mapping.get(selected_vendor)
 
-# 3. Fetch ALL Ticket Types (Pagination restored)
+# Dynamically find the numeric ID for Main Gate
+maingate_id = None
+for key, val in vendor_mapping.items():
+    if "main gate" in str(key).lower():
+        maingate_id = val
+        break
+
+# 3. Fetch ALL Ticket Types
 def fetch_all_ticket_types():
     unique_tickets = {}
     try:
@@ -112,22 +120,38 @@ with st.form("allocation_form"):
             try:
                 available_tickets = []
                 
-                # --- DB-LEVEL VAULT SEARCH (FIXED: Searching vendor_id instead of vendor_name) ---
-                # Search for tags where vendor_id is literally a Database NULL
+                # --- WIDE NET VAULT SEARCH ---
+                # 1. Search for NULL vendor_id
                 null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_id', 'null').limit(req_stock).execute()
                 if null_response.data:
                     available_tickets.extend([t['id'] for t in null_response.data])
                 
-                # Fallback: Check if there are generated tickets with a specific status if they aren't NULL
+                # 2. Search for Main Gate's specific numeric ID
+                if maingate_id and len(available_tickets) < req_stock:
+                    mg_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', maingate_id).limit(req_stock - len(available_tickets)).execute()
+                    if mg_response.data:
+                        available_tickets.extend([t['id'] for t in mg_response.data])
+                        
+                # 3. Search for vendor_id = 0 (sometimes used as default unassigned)
                 if len(available_tickets) < req_stock:
-                    status_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('status', 'Generated').limit(req_stock - len(available_tickets)).execute()
-                    if status_response.data:
-                        available_tickets.extend([t['id'] for t in status_response.data])
+                    zero_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', 0).limit(req_stock - len(available_tickets)).execute()
+                    if zero_response.data:
+                        available_tickets.extend([t['id'] for t in zero_response.data])
 
                 # --- EVALUATE THE RESULTS ---
                 if len(available_tickets) < req_stock:
                     st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available.")
-                    st.info("💡 **Debug Tip:** Open your Supabase 'tickets' table and look at your new tags. The 'vendor_id' column must be completely empty (NULL) for them to be available.")
+                    
+                    # --- AUTO-DEBUGGER ---
+                    st.warning("🔍 **SYSTEM DIAGNOSTIC TRIGGERED**")
+                    debug_res = supabase.table('tickets').select('id, vendor_id, status, event_id').eq('ticket_type', clean_tag).limit(10).execute()
+                    
+                    if debug_res.data:
+                        st.write(f"The database found these '{clean_tag}' tags, but they are blocked from allocation. Here is their hidden data:")
+                        st.dataframe(pd.DataFrame(debug_res.data))
+                        st.info("👉 **Look at the `vendor_id` column above.** If it has a number (like 4 or 8), those tags are already owned by another vendor. If you want to issue them, you must update the generator to leave that ID blank, or add that specific ID to the vault rules.")
+                    else:
+                        st.error(f"❌ CRITICAL: The database contains absolutely 0 tags named '{clean_tag}'. Check if the generator actually created them, or if it used a different spelling.")
                 else:
                     # 1. Claim the physical tickets by assigning the numeric vendor_id
                     tickets_to_assign = available_tickets[:req_stock]
