@@ -52,17 +52,28 @@ if selected_event_name and selected_event_name != "No events found":
             selected_event_id = e.get('id')
             break
 
-# 3. Fetch ALL Ticket Types (using direct DB query for speed)
+# 3. Fetch ALL Ticket Types (Restored Pagination to bypass 1,000 limit for dropdowns)
 def fetch_all_ticket_types():
     unique_tickets = {}
     try:
-        # Get a list of all unique ticket categories by scanning directly in Supabase
-        response = supabase.table('tickets').select('ticket_type, price').execute()
-        if response.data:
-            for row in response.data:
+        limit = 1000
+        offset = 0
+        while True:
+            response = supabase.table('tickets').select('ticket_type, price').range(offset, offset + limit - 1).execute()
+            data = response.data
+            
+            if not data:
+                break
+                
+            for row in data:
                 t_type = row.get('ticket_type')
                 if t_type and t_type not in unique_tickets:
                     unique_tickets[t_type] = row.get('price', 0.0)
+                    
+            if len(data) < limit:
+                break
+            offset += limit
+            
         return unique_tickets
     except Exception as e:
         st.error(f"Database Error: {e}")
@@ -97,7 +108,7 @@ with st.form("allocation_form"):
             try:
                 available_tickets = []
                 
-                # --- DB-LEVEL VAULT SEARCH ---
+                # --- DB-LEVEL VAULT SEARCH (Fast, ignores 1,000 limit) ---
                 # 1. Search for tags where vendor_name is literally a Database NULL
                 null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_name', 'null').limit(req_stock).execute()
                 if null_response.data:
@@ -118,7 +129,7 @@ with st.form("allocation_form"):
                 # --- EVALUATE THE RESULTS ---
                 if len(available_tickets) < req_stock:
                     st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available.")
-                    st.info("💡 **Debug Tip:** Open your Supabase 'tickets' table and look at the 50 tags you just generated. Ensure their `vendor_name` column is empty, and their `ticket_type` is exactly 'Double'.")
+                    st.info("💡 **Debug Tip:** Open your Supabase 'tickets' table and look at the new tags you just generated. Ensure their `vendor_name` column is empty, and their `ticket_type` matches exactly.")
                 else:
                     # 1. Claim the physical tickets
                     tickets_to_assign = available_tickets[:req_stock]
