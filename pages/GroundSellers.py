@@ -13,6 +13,10 @@ supabase: Client = init_connection()
 
 st.title("Issue Vendor Allocation")
 
+# --- MASTER VAULT CONFIGURATION ---
+# We explicitly define Vendor ID 4 (Main Gate) as the master vault
+VAULT_VENDOR_ID = 4  
+
 # 1. Fetch Events
 def fetch_events():
     try:
@@ -56,13 +60,6 @@ if selected_event_name and selected_event_name != "No events found":
             break
             
 selected_vendor_id = vendor_mapping.get(selected_vendor)
-
-# Dynamically find the numeric ID for Main Gate
-maingate_id = None
-for key, val in vendor_mapping.items():
-    if "main gate" in str(key).lower():
-        maingate_id = val
-        break
 
 # 3. Fetch ALL Ticket Types
 def fetch_all_ticket_types():
@@ -120,19 +117,20 @@ with st.form("allocation_form"):
             try:
                 available_tickets = []
                 
-                # --- WIDE NET VAULT SEARCH ---
-                # 1. Search for NULL vendor_id
-                null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_id', 'null').limit(req_stock).execute()
-                if null_response.data:
-                    available_tickets.extend([t['id'] for t in null_response.data])
+                # --- EXPLICIT VAULT SEARCH ---
                 
-                # 2. Search for Main Gate's specific numeric ID
-                if maingate_id and len(available_tickets) < req_stock:
-                    mg_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', maingate_id).limit(req_stock - len(available_tickets)).execute()
-                    if mg_response.data:
-                        available_tickets.extend([t['id'] for t in mg_response.data])
+                # 1. Search for tickets locked in the Master Vault (Main Gate / ID 4)
+                mg_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', VAULT_VENDOR_ID).limit(req_stock).execute()
+                if mg_response.data:
+                    available_tickets.extend([t['id'] for t in mg_response.data])
+
+                # 2. If we need more, search for strictly unassigned (NULL) tickets
+                if len(available_tickets) < req_stock:
+                    null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_id', 'null').limit(req_stock - len(available_tickets)).execute()
+                    if null_response.data:
+                        available_tickets.extend([t['id'] for t in null_response.data])
                         
-                # 3. Search for vendor_id = 0 (sometimes used as default unassigned)
+                # 3. If we STILL need more, search for vendor_id = 0
                 if len(available_tickets) < req_stock:
                     zero_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_id', 0).limit(req_stock - len(available_tickets)).execute()
                     if zero_response.data:
@@ -140,20 +138,9 @@ with st.form("allocation_form"):
 
                 # --- EVALUATE THE RESULTS ---
                 if len(available_tickets) < req_stock:
-                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available.")
-                    
-                    # --- AUTO-DEBUGGER ---
-                    st.warning("🔍 **SYSTEM DIAGNOSTIC TRIGGERED**")
-                    debug_res = supabase.table('tickets').select('id, vendor_id, status, event_id').eq('ticket_type', clean_tag).limit(10).execute()
-                    
-                    if debug_res.data:
-                        st.write(f"The database found these '{clean_tag}' tags, but they are blocked from allocation. Here is their hidden data:")
-                        st.dataframe(pd.DataFrame(debug_res.data))
-                        st.info("👉 **Look at the `vendor_id` column above.** If it has a number (like 4 or 8), those tags are already owned by another vendor. If you want to issue them, you must update the generator to leave that ID blank, or add that specific ID to the vault rules.")
-                    else:
-                        st.error(f"❌ CRITICAL: The database contains absolutely 0 tags named '{clean_tag}'. Check if the generator actually created them, or if it used a different spelling.")
+                    st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} '{clean_tag}' tags are available in the vault.")
                 else:
-                    # 1. Claim the physical tickets by assigning the numeric vendor_id
+                    # 1. Reassign the physical tickets from the Vault to the Ground Seller
                     tickets_to_assign = available_tickets[:req_stock]
                     
                     supabase.table('tickets') \
@@ -161,7 +148,7 @@ with st.form("allocation_form"):
                         .in_('id', tickets_to_assign) \
                         .execute()
                     
-                    # 2. Update the Inventory Summary Table
+                    # 2. Update the Inventory Summary Table for the new Ground Seller
                     existing_response = supabase.table('inventory') \
                         .select('*') \
                         .eq('event_name', selected_event_name) \
@@ -178,13 +165,13 @@ with st.form("allocation_form"):
                             'initial_stock': new_initial, 'stock_count': new_stock, 'price': price
                         }).eq('event_name', selected_event_name).eq('vendor_name', selected_vendor).eq('tag_type', clean_tag).execute()
                           
-                        st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {req_stock} physical '{clean_tag}' tags to {selected_vendor}. New Total: {new_initial}")
+                        st.success(f"✅ VAULT TRANSFER SUCCESS: Moved {req_stock} physical '{clean_tag}' tags from Main Gate to {selected_vendor}. New Total: {new_initial}")
                     else:
                         supabase.table('inventory').insert({
                             'event_name': selected_event_name, 'vendor_name': selected_vendor, 'tag_type': clean_tag,
                             'initial_stock': req_stock, 'stock_count': req_stock, 'price': price
                         }).execute()
                         
-                        st.success(f"✅ NEW VAULT TRANSFER: Moved {req_stock} physical '{clean_tag}' tags to {selected_vendor}.")
+                        st.success(f"✅ NEW VAULT TRANSFER: Moved {req_stock} physical '{clean_tag}' tags from Main Gate to {selected_vendor}.")
             except Exception as e:
                 st.error(f"❌ Transaction Error: {str(e)}")
