@@ -21,29 +21,31 @@ def fetch_events():
         st.error(f"Events fetch error: {e}")
         return []
 
-# 2. Fetch Vendors
+# 2. Fetch Vendors AND Map their Numeric IDs
 def fetch_vendors():
     try:
         response = supabase.table('vendors').select('*').execute()
-        vendor_names = []
+        vendor_map = {}
         if response.data:
             for v in response.data:
                 name = v.get('name') or v.get('vendor_name') or v.get('full_name')
                 if name:
-                    vendor_names.append(name)
-        return vendor_names
+                    vendor_map[name] = v.get('id')
+        return vendor_map
     except Exception as e:
         st.error(f"Vendors fetch error: {e}")
-        return []
+        return {}
 
 events_data = fetch_events()
 event_names = [e.get('name') or e.get('event_name') or e.get('title') for e in events_data if e]
-vendor_list = fetch_vendors()
+
+vendor_mapping = fetch_vendors()
+vendor_list = list(vendor_mapping.keys())
 
 selected_event_name = st.selectbox("Target Event", options=event_names if event_names else ["No events found"])
 selected_vendor = st.selectbox("Select Vendor", options=vendor_list if vendor_list else ["No vendors found"])
 
-# Match selected event name to its numeric ID
+# Match selected event name and vendor to their numeric IDs
 selected_event_id = None
 if selected_event_name and selected_event_name != "No events found":
     for e in events_data:
@@ -51,8 +53,10 @@ if selected_event_name and selected_event_name != "No events found":
         if name == selected_event_name:
             selected_event_id = e.get('id')
             break
+            
+selected_vendor_id = vendor_mapping.get(selected_vendor)
 
-# 3. Fetch ALL Ticket Types (Restored Pagination to bypass 1,000 limit for dropdowns)
+# 3. Fetch ALL Ticket Types (Pagination restored)
 def fetch_all_ticket_types():
     unique_tickets = {}
     try:
@@ -108,38 +112,32 @@ with st.form("allocation_form"):
             try:
                 available_tickets = []
                 
-                # --- DB-LEVEL VAULT SEARCH (Fast, ignores 1,000 limit) ---
-                # 1. Search for tags where vendor_name is literally a Database NULL
-                null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_name', 'null').limit(req_stock).execute()
+                # --- DB-LEVEL VAULT SEARCH (FIXED: Searching vendor_id instead of vendor_name) ---
+                # Search for tags where vendor_id is literally a Database NULL
+                null_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).is_('vendor_id', 'null').limit(req_stock).execute()
                 if null_response.data:
                     available_tickets.extend([t['id'] for t in null_response.data])
                 
-                # 2. If we need more, search for tags where vendor_name is just an empty string ""
+                # Fallback: Check if there are generated tickets with a specific status if they aren't NULL
                 if len(available_tickets) < req_stock:
-                    empty_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('vendor_name', '').limit(req_stock - len(available_tickets)).execute()
-                    if empty_response.data:
-                        available_tickets.extend([t['id'] for t in empty_response.data])
-                
-                # 3. If we STILL need more, search for tags assigned to 'Main Gate'
-                if len(available_tickets) < req_stock:
-                    maingate_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).ilike('vendor_name', '%main gate%').limit(req_stock - len(available_tickets)).execute()
-                    if maingate_response.data:
-                        available_tickets.extend([t['id'] for t in maingate_response.data])
+                    status_response = supabase.table('tickets').select('id').eq('ticket_type', clean_tag).eq('status', 'Generated').limit(req_stock - len(available_tickets)).execute()
+                    if status_response.data:
+                        available_tickets.extend([t['id'] for t in status_response.data])
 
                 # --- EVALUATE THE RESULTS ---
                 if len(available_tickets) < req_stock:
                     st.error(f"⚠️ Vault Shortage: You requested {req_stock} tickets, but only {len(available_tickets)} unassigned '{clean_tag}' tags are available.")
-                    st.info("💡 **Debug Tip:** Open your Supabase 'tickets' table and look at the new tags you just generated. Ensure their `vendor_name` column is empty, and their `ticket_type` matches exactly.")
+                    st.info("💡 **Debug Tip:** Open your Supabase 'tickets' table and look at your new tags. The 'vendor_id' column must be completely empty (NULL) for them to be available.")
                 else:
-                    # 1. Claim the physical tickets
+                    # 1. Claim the physical tickets by assigning the numeric vendor_id
                     tickets_to_assign = available_tickets[:req_stock]
                     
                     supabase.table('tickets') \
-                        .update({'vendor_name': selected_vendor, 'status': 'With_Vendor'}) \
+                        .update({'vendor_id': selected_vendor_id, 'status': 'With_Vendor'}) \
                         .in_('id', tickets_to_assign) \
                         .execute()
                     
-                    # 2. Update the Inventory Summary
+                    # 2. Update the Inventory Summary Table
                     existing_response = supabase.table('inventory') \
                         .select('*') \
                         .eq('event_name', selected_event_name) \
